@@ -1,0 +1,32 @@
+{
+  "name": "@reeleel/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "The ReelEel command line. Same services as the desktop app, scriptable.",
+  "license": "MIT",
+  "bin": {
+    "reeleel": "./dist/index.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --root ."
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "@reeleel/core": "workspace:*",
+    "@reeleel/sports": "workspace:*",
+    "chalk": "^5.6.2",
+    "commander": "^14.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.6",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.17"
+  }
+}

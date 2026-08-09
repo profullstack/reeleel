@@ -1,0 +1,294 @@
+import { all, execute, get, projectDb, toNumber } from './db.js';
+import { ReelEelError, notFound } from './errors.js';
+import { newId, nowIso } from './ids.js';
+import type { TrackSample, TrackSeries } from './scoring.js';
+
+export interface TrackRecord {
+  id: string;
+  videoId: string | null;
+  className: string;
+  athleteId: string | null;
+  confidence: number;
+  startFrame: number | null;
+  endFrame: number | null;
+  uncertain: boolean;
+  pointCount: number;
+}
+
+interface TrackRow {
+  id: string;
+  project_id: string;
+  video_id: string | null;
+  class: string;
+  athlete_id: string | null;
+  confidence: number;
+  start_frame: number | null;
+  end_frame: number | null;
+  uncertain: number;
+  point_count: number;
+}
+
+const toTrack = (row: TrackRow): TrackRecord => ({
+  id: row.id,
+  videoId: row.video_id,
+  className: row.class,
+  athleteId: row.athlete_id,
+  confidence: toNumber(row.confidence),
+  startFrame: row.start_frame === null ? null : toNumber(row.start_frame),
+  endFrame: row.end_frame === null ? null : toNumber(row.end_frame),
+  uncertain: toNumber(row.uncertain) === 1,
+  pointCount: toNumber(row.point_count),
+});
+
+const TRACK_WITH_COUNT = `
+  SELECT t.*, (SELECT COUNT(*) FROM track_points p WHERE p.track_id = t.id) AS point_count
+  FROM tracks t`;
+
+export const listTracks = async (root: string, videoId?: string): Promise<TrackRecord[]> => {
+  const db = await projectDb(root);
+  const where = videoId === undefined ? '' : 'WHERE t.video_id = ?';
+  const params = videoId === undefined ? [] : [videoId];
+  const rows = await all<TrackRow>(
+    db,
+    `${TRACK_WITH_COUNT} ${where} ORDER BY t.class, t.start_frame`,
+    params,
+  );
+  return rows.map(toTrack);
+};
+
+export const getTrack = async (root: string, trackId: string): Promise<TrackRecord> => {
+  const db = await projectDb(root);
+  const row = await get<TrackRow>(db, `${TRACK_WITH_COUNT} WHERE t.id = ?`, [trackId]);
+  if (row === undefined) throw notFound('Track', trackId);
+  return toTrack(row);
+};
+
+/** Track data in the shape the scoring engine expects. */
+export const loadTrackSeries = async (root: string, videoId: string): Promise<TrackSeries[]> => {
+  const db = await projectDb(root);
+  const tracks = await all<{ id: string; class: string }>(
+    db,
+    'SELECT id, class FROM tracks WHERE video_id = ?',
+    [videoId],
+  );
+
+  const series: TrackSeries[] = [];
+  for (const track of tracks) {
+    const samples = await all<TrackSample>(
+      db,
+      'SELECT ts, x, y, w, h, confidence FROM track_points WHERE track_id = ? ORDER BY frame',
+      [track.id],
+    );
+    series.push({ id: track.id, className: track.class, samples });
+  }
+  return series;
+};
+
+export interface CreateTrackInput {
+  videoId: string;
+  className: string;
+  athleteId?: string | null;
+  confidence?: number;
+  uncertain?: boolean;
+  samples: (TrackSample & { frame: number })[];
+}
+
+export const createTrack = async (
+  root: string,
+  input: CreateTrackInput,
+): Promise<TrackRecord> => {
+  const db = await projectDb(root);
+  const id = newId('trk');
+  const frames = input.samples.map((sample) => sample.frame);
+  const timestamp = nowIso();
+
+  const projectRow = await get<{ value: string }>(
+    db,
+    "SELECT value FROM meta WHERE key = 'project_id'",
+  );
+
+  // One transaction: a track with no points is worse than no track at all.
+  const tx = await db.transaction('write');
+  try {
+    await tx.execute({
+      sql: `INSERT INTO tracks
+              (id, project_id, video_id, class, athlete_id, confidence, start_frame, end_frame, uncertain, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        id,
+        projectRow?.value ?? '',
+        input.videoId,
+        input.className,
+        input.athleteId ?? null,
+        input.confidence ?? 0,
+        frames.length > 0 ? Math.min(...frames) : null,
+        frames.length > 0 ? Math.max(...frames) : null,
+        input.uncertain === true ? 1 : 0,
+        timestamp,
+        timestamp,
+      ],
+    });
+
+    for (const sample of input.samples) {
+      await tx.execute({
+        sql: `INSERT INTO track_points (track_id, frame, ts, x, y, w, h, confidence, occluded, source)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'model')`,
+        args: [id, sample.frame, sample.ts, sample.x, sample.y, sample.w, sample.h, sample.confidence],
+      });
+    }
+    await tx.commit();
+  } catch (error) {
+    await tx.rollback();
+    throw error;
+  }
+
+  return getTrack(root, id);
+};
+
+export interface TrackUpdate {
+  className?: string;
+  athleteId?: string | null;
+  uncertain?: boolean;
+}
+
+export const updateTrack = async (
+  root: string,
+  trackId: string,
+  patch: TrackUpdate,
+): Promise<TrackRecord> => {
+  const db = await projectDb(root);
+  const existing = await get<TrackRow>(db, 'SELECT * FROM tracks WHERE id = ?', [trackId]);
+  if (existing === undefined) throw notFound('Track', trackId);
+
+  await execute(
+    db,
+    'UPDATE tracks SET class = ?, athlete_id = ?, uncertain = ?, updated_at = ? WHERE id = ?',
+    [
+      patch.className ?? existing.class,
+      patch.athleteId === undefined ? existing.athlete_id : patch.athleteId,
+      patch.uncertain === undefined ? toNumber(existing.uncertain) : patch.uncertain ? 1 : 0,
+      nowIso(),
+      trackId,
+    ],
+  );
+  return getTrack(root, trackId);
+};
+
+export const removeTrack = async (root: string, trackId: string): Promise<void> => {
+  const db = await projectDb(root);
+  const existing = await get<{ id: string }>(db, 'SELECT id FROM tracks WHERE id = ?', [trackId]);
+  if (existing === undefined) throw notFound('Track', trackId);
+  await execute(db, 'DELETE FROM tracks WHERE id = ?', [trackId]);
+};
+
+/** Fuses `sourceId` into `targetId` — the annotator's "merge tracks" action. */
+export const mergeTracks = async (
+  root: string,
+  targetId: string,
+  sourceId: string,
+): Promise<TrackRecord> => {
+  if (targetId === sourceId) {
+    throw new ReelEelError('INVALID_INPUT', 'Cannot merge a track into itself.');
+  }
+
+  const db = await projectDb(root);
+  const target = await get<TrackRow>(db, 'SELECT * FROM tracks WHERE id = ?', [targetId]);
+  const source = await get<TrackRow>(db, 'SELECT * FROM tracks WHERE id = ?', [sourceId]);
+  if (target === undefined) throw notFound('Track', targetId);
+  if (source === undefined) throw notFound('Track', sourceId);
+  if (target.video_id !== source.video_id) {
+    throw new ReelEelError('CONFLICT', 'Tracks from different videos cannot be merged.');
+  }
+
+  const tx = await db.transaction('write');
+  try {
+    // Frames already claimed by the target win — a merge must not create two
+    // boxes for the same object on the same frame.
+    await tx.execute({
+      sql: `DELETE FROM track_points
+            WHERE track_id = ? AND frame IN (SELECT frame FROM track_points WHERE track_id = ?)`,
+      args: [sourceId, targetId],
+    });
+    await tx.execute({
+      sql: 'UPDATE track_points SET track_id = ? WHERE track_id = ?',
+      args: [targetId, sourceId],
+    });
+    await tx.execute({ sql: 'DELETE FROM tracks WHERE id = ?', args: [sourceId] });
+    await tx.execute({
+      sql: `UPDATE tracks SET
+              start_frame = (SELECT MIN(frame) FROM track_points WHERE track_id = ?),
+              end_frame   = (SELECT MAX(frame) FROM track_points WHERE track_id = ?),
+              updated_at  = ?
+            WHERE id = ?`,
+      args: [targetId, targetId, nowIso(), targetId],
+    });
+    await tx.commit();
+  } catch (error) {
+    await tx.rollback();
+    throw error;
+  }
+
+  return getTrack(root, targetId);
+};
+
+/** Splits a track at `frame`; points from `frame` onward move to a new track. */
+export const splitTrack = async (
+  root: string,
+  trackId: string,
+  frame: number,
+): Promise<TrackRecord> => {
+  const db = await projectDb(root);
+  const existing = await get<TrackRow>(db, 'SELECT * FROM tracks WHERE id = ?', [trackId]);
+  if (existing === undefined) throw notFound('Track', trackId);
+
+  const tail = await get<{ n: number }>(
+    db,
+    'SELECT COUNT(*) AS n FROM track_points WHERE track_id = ? AND frame >= ?',
+    [trackId, frame],
+  );
+  if (toNumber(tail?.n ?? 0) === 0) {
+    throw new ReelEelError(
+      'INVALID_INPUT',
+      `Track ${trackId} has no points at or after frame ${frame}.`,
+    );
+  }
+
+  const newTrackId = newId('trk');
+  const timestamp = nowIso();
+  const tx = await db.transaction('write');
+  try {
+    await tx.execute({
+      sql: `INSERT INTO tracks (id, project_id, video_id, class, athlete_id, confidence, uncertain, created_at, updated_at)
+            VALUES (?, ?, ?, ?, NULL, ?, 1, ?, ?)`,
+      args: [
+        newTrackId,
+        existing.project_id,
+        existing.video_id,
+        existing.class,
+        toNumber(existing.confidence),
+        timestamp,
+        timestamp,
+      ],
+    });
+    await tx.execute({
+      sql: 'UPDATE track_points SET track_id = ? WHERE track_id = ? AND frame >= ?',
+      args: [newTrackId, trackId, frame],
+    });
+    for (const id of [trackId, newTrackId]) {
+      await tx.execute({
+        sql: `UPDATE tracks SET
+                start_frame = (SELECT MIN(frame) FROM track_points WHERE track_id = ?),
+                end_frame   = (SELECT MAX(frame) FROM track_points WHERE track_id = ?),
+                updated_at  = ?
+              WHERE id = ?`,
+        args: [id, id, timestamp, id],
+      });
+    }
+    await tx.commit();
+  } catch (error) {
+    await tx.rollback();
+    throw error;
+  }
+
+  return getTrack(root, newTrackId);
+};

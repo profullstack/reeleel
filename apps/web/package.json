@@ -1,0 +1,32 @@
+{
+  "name": "@reeleel/web",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "ReelEel web app — Hono JSX server-rendered pages with client-side islands, backed by the ReelEel API.",
+  "license": "MIT",
+  "scripts": {
+    "prebuild": "node scripts/build-client.mjs",
+    "build": "tsc -p tsconfig.json",
+    "dev": "node scripts/build-client.mjs --watch & tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --root ."
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "@reeleel/api": "workspace:*",
+    "@reeleel/core": "workspace:*",
+    "hono": "^4.6.14"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.6",
+    "esbuild": "^0.28.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.17"
+  }
+}

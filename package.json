@@ -28,11 +28,14 @@
   },
   "packageManager": "pnpm@11.18.0",
   "scripts": {
-    "build": "pnpm -r build",
+    "build": "pnpm -r --filter \"./packages/**\" --filter \"./apps/**\" build",
+    "cli": "pnpm --filter @reeleel/cli exec tsx src/index.ts",
     "dev": "pnpm --filter @reeleel/cli dev",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "db:migrate": "node scripts/db-migrate.mjs",
+    "db:status": "node scripts/db-migrate.mjs --status",
     "typecheck": "pnpm -r typecheck",
     "lint": "eslint .",
     "format": "prettier --write .",
@@ -40,6 +43,8 @@
     "precommit": "pnpm lint && pnpm typecheck && pnpm test:run"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "@libsql/client": "^0.17.4",
     "@types/node": "^25.0.6",
     "eslint": "^9.39.0",
     "prettier": "^3.6.2",

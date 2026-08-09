@@ -1,0 +1,29 @@
+[project]
+name = "reeleel-cv"
+version = "0.1.0"
+description = "ReelEel computer-vision worker: detection and multi-object tracking for youth sports footage."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+# Intentionally empty for now. The heavy stack (torch, opencv, onnxruntime) is
+# added in PRD phase 3, so that installing the worker scaffold does not pull a
+# multi-gigabyte dependency tree before there is a model to run.
+dependencies = []
+
+[project.optional-dependencies]
+cpu = [
+  "numpy>=1.26",
+  "opencv-python-headless>=4.10",
+  "onnxruntime>=1.18",
+]
+
+[project.scripts]
+reeleel-cv = "reeleel_cv.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["reeleel_cv"]

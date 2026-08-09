@@ -1,4 +1,11 @@
+# ReelEel monorepo — every shippable app and shared library lives here.
+#   apps/*     user-facing applications (cli, desktop, pwa)
+#   packages/* shared libraries consumed by the apps (core, ui, sports)
+#   tools/*    build/release/dev tooling
 packages:
+  - apps/*
   - packages/*
+  - tools/*
+
 allowBuilds:
-  esbuild: set this to true or false
+  esbuild: true

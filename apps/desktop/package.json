@@ -1,0 +1,21 @@
+{
+  "name": "@reeleel/desktop",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "ReelEel desktop shell (Windows, macOS, Linux). Wraps the same @reeleel/core services as the CLI and web app.",
+  "license": "MIT",
+  "scripts": {
+    "build": "echo \"@reeleel/desktop is a scaffold; see README.md\" && exit 0",
+    "typecheck": "echo \"@reeleel/desktop is a scaffold; see README.md\" && exit 0",
+    "test": "echo \"@reeleel/desktop is a scaffold; see README.md\" && exit 0"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "@reeleel/api": "workspace:*",
+    "@reeleel/core": "workspace:*",
+    "@reeleel/web": "workspace:*"
+  }
+}

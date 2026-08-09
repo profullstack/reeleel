@@ -1,0 +1,34 @@
+{
+  "name": "@reeleel/db",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Turso/libSQL clients and forward-only migrations for ReelEel. Local file by default, Turso when configured.",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "migrations"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "migrate": "node ../../scripts/db-migrate.mjs",
+    "migrate:status": "node ../../scripts/db-migrate.mjs --status",
+    "test": "vitest run --root ."
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.17.4"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.17"
+  }
+}

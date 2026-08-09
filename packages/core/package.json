@@ -1,0 +1,33 @@
+{
+  "name": "@reeleel/core",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Shared ReelEel services: project model, SQLite storage, FFmpeg, jobs, sport plugins, dataset I/O. Used by the CLI, desktop app and PWA.",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --root ."
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "@reeleel/db": "workspace:*",
+    "@reeleel/sports": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.17"
+  }
+}
