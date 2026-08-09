@@ -87,6 +87,8 @@ const STYLES = `
   .upload-meta { margin-top: .4rem; font-size: .85rem; }
   .upload-error { display: inline-block; margin: .5rem 0 0; padding: .3rem .6rem; }
   .upload-total { margin: .75rem 0 .25rem; display: grid; gap: .3rem; }
+  .stored-uploads { margin-top: 1.25rem; padding-top: .5rem; border-top: 1px solid var(--line); }
+  .stored-uploads h3 { font-size: .9rem; margin: .5rem 0; color: var(--muted); font-weight: 600; }
   progress {
     width: 100%; height: .5rem; appearance: none; border: 0;
     border-radius: 999px; overflow: hidden; background: var(--line);
