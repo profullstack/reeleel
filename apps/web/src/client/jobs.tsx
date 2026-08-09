@@ -67,6 +67,8 @@ const JobLog = ({ base }: { base: string }) => {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [lines, setLines] = useState<LogLine[]>([]);
   const [connection, setConnection] = useState<Connection>('connecting');
+  const [busy, setBusy] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const pane = useRef<HTMLDivElement | null>(null);
   /** Only pin to the bottom while the user is already there. */
   const pinned = useRef(true);
@@ -142,6 +144,34 @@ const JobLog = ({ base }: { base: string }) => {
   const running = jobs.filter((job) => job.status === 'running' || job.status === 'queued');
   const recent = jobs.slice(0, 5);
 
+  /**
+   * Job controls post as ordinary form actions so the no-JavaScript page can
+   * use the identical routes; here they go over fetch to avoid losing the log.
+   * No optimistic update — the SSE feed reports the real state a moment later,
+   * and inventing one would only risk disagreeing with it.
+   */
+  const act = async (job: Job, action: 'cancel' | 'retry' | 'delete'): Promise<void> => {
+    if (action === 'delete' && !window.confirm('Remove this run from the history?')) return;
+    if (action === 'cancel' && !window.confirm('Stop this analysis? Progress so far is lost.')) return;
+    setBusy(job.id);
+    try {
+      const response = await fetch(`${base}/jobs/${job.id}/${action}`, {
+        method: 'POST',
+        headers: { accept: 'application/json' },
+      });
+      // These routes redirect for the no-JS path; a redirect is still a success.
+      if (!response.ok && response.type !== 'opaqueredirect') {
+        setActionError(`Could not ${action} that run (${response.status}).`);
+      } else {
+        setActionError(null);
+      }
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <div>
       {/* The page already has the "Analysis" heading; this only adds the state
@@ -189,6 +219,23 @@ const JobLog = ({ base }: { base: string }) => {
                 {Math.round(job.progress * 100)}%
                 {clock(job.etaSeconds) === '' ? '' : ` — ${clock(job.etaSeconds)}`}
               </span>
+
+              {job.status === 'running' || job.status === 'queued' ? (
+                <button type="button" disabled={busy === job.id} onClick={() => void act(job, 'cancel')}>
+                  Stop
+                </button>
+              ) : (
+                <>
+                  {/* Replays with the settings that run used, not whatever the
+                      form shows now. */}
+                  <button type="button" disabled={busy === job.id} onClick={() => void act(job, 'retry')}>
+                    Replay
+                  </button>
+                  <button type="button" disabled={busy === job.id} onClick={() => void act(job, 'delete')}>
+                    Remove
+                  </button>
+                </>
+              )}
             </div>
 
             {/* The bit that was missing entirely: why it failed. */}
@@ -196,6 +243,8 @@ const JobLog = ({ base }: { base: string }) => {
           </div>
         ))
       )}
+
+      {actionError === null ? null : <p class="pill reject upload-error">{actionError}</p>}
 
       <div class="log-pane" ref={pane} onScroll={onScroll} role="log" aria-live="polite">
         {lines.length === 0 ? (

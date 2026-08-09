@@ -12,9 +12,11 @@ import {
   addAthlete,
   addVideo,
   analyzeProject,
+  cancelJob,
   clipsFromMoments,
   createProject,
   createReel,
+  getJob,
   isReelEelError,
   listExports,
   listJobLogsSince,
@@ -24,6 +26,7 @@ import {
   projectDir,
   removeAthlete,
   removeExport,
+  removeJob,
   removeProject,
   removeVideo,
   renderReel,
@@ -208,6 +211,37 @@ const uploadFailed = (
   return back(c, to, undefined, `${described.error}${hint}${suffix}`);
 };
 
+/**
+ * Analyses running in this process, by job id.
+ *
+ * Cancelling has to reach the work, not just relabel the row: `cancelJob`
+ * alone would mark a job canceled while FFmpeg and the detector carried on
+ * chewing through the video. The signal is what makes Stop mean stop.
+ */
+const runningAnalyses = new Map<string, AbortController>();
+
+/** Kicks off an analysis and keeps hold of its cancel handle. */
+const startAnalysis = (root: string, options: { preset: Preset; videoId?: string }): void => {
+  const controller = new AbortController();
+  let jobId: string | null = null;
+
+  void analyzeProject(root, {
+    preset: options.preset,
+    ...(options.videoId === undefined ? {} : { videoId: options.videoId }),
+    signal: controller.signal,
+    onStart: (job) => {
+      jobId = job.id;
+      runningAnalyses.set(job.id, controller);
+    },
+  })
+    .catch((error: unknown) => {
+      process.stderr.write(`analysis failed: ${failed(error)}\n`);
+    })
+    .finally(() => {
+      if (jobId !== null) runningAnalyses.delete(jobId);
+    });
+};
+
 export const registerActions = (app: Hono): void => {
   const guard = async (c: Context): Promise<Response | null> =>
     originAllowed(c) ? null : c.text('Bad origin', 403);
@@ -381,6 +415,78 @@ export const registerActions = (app: Hono): void => {
       return c.json({ ok: false, code: 'NOT_FOUND', error: 'No such upload.' }, 404);
     }
     return c.json({ ok: true, upload: view(record) });
+  });
+
+  // ── Job controls: stop, replay, discard ───────────────────────────────────
+  //
+  // The pipeline could already cancel and re-run; none of it was reachable from
+  // the browser, so a run that went wrong could only be waited out.
+
+  /** Stop. Aborts the actual work, then records the cancellation. */
+  app.post('/projects/:ref/jobs/:id/cancel', async (c) => {
+    const bad = await guard(c);
+    if (bad !== null) return bad;
+    const ref = c.req.param('ref') ?? '';
+    const to = `/projects/${encodeURIComponent(ref)}`;
+
+    try {
+      const root = await rootOf(c);
+      const id = c.req.param('id') ?? '';
+      // Abort first: the job row is the record, the signal is the mechanism.
+      runningAnalyses.get(id)?.abort();
+      runningAnalyses.delete(id);
+      await cancelJob(root, id);
+      return back(c, to, 'Analysis canceled');
+    } catch (error) {
+      return back(c, to, undefined, failed(error));
+    }
+  });
+
+  /**
+   * Replay. Re-runs with the settings the original used, rather than whatever
+   * the form happens to show now — the point of replaying a specific run.
+   */
+  app.post('/projects/:ref/jobs/:id/retry', async (c) => {
+    const bad = await guard(c);
+    if (bad !== null) return bad;
+    const ref = c.req.param('ref') ?? '';
+    const to = `/projects/${encodeURIComponent(ref)}`;
+
+    try {
+      const root = await rootOf(c);
+      const job = await getJob(root, c.req.param('id') ?? '');
+      if (job.status === 'running' || job.status === 'queued') {
+        return back(c, to, undefined, 'That analysis is still running.');
+      }
+
+      const params = job.params as { preset?: string; videoIds?: unknown };
+      const preset = (typeof params.preset === 'string' ? params.preset : 'balanced') as Preset;
+      const videoIds = Array.isArray(params.videoIds) ? params.videoIds : [];
+      // One video means it was a single-video run; several means "all", and
+      // analyzeProject reads that as "no filter".
+      const videoId = videoIds.length === 1 && typeof videoIds[0] === 'string' ? videoIds[0] : undefined;
+
+      startAnalysis(root, { preset, ...(videoId === undefined ? {} : { videoId }) });
+      return back(c, to, 'Analysis restarted — watch the live log');
+    } catch (error) {
+      return back(c, to, undefined, failed(error));
+    }
+  });
+
+  /** Discard a finished run from the history. */
+  app.post('/projects/:ref/jobs/:id/delete', async (c) => {
+    const bad = await guard(c);
+    if (bad !== null) return bad;
+    const ref = c.req.param('ref') ?? '';
+    const to = `/projects/${encodeURIComponent(ref)}`;
+
+    try {
+      const root = await rootOf(c);
+      await removeJob(root, c.req.param('id') ?? '');
+      return back(c, to, 'Removed from history');
+    } catch (error) {
+      return back(c, to, undefined, failed(error));
+    }
   });
 
   /**
@@ -771,11 +877,7 @@ export const registerActions = (app: Hono): void => {
 
       // Analysis takes minutes; holding the request open would time out at the
       // proxy. It records a job, so the page can report progress instead.
-      void analyzeProject(root, { preset, ...(videoId === undefined ? {} : { videoId }) }).catch(
-        (error: unknown) => {
-          process.stderr.write(`analysis failed: ${failed(error)}\n`);
-        },
-      );
+      startAnalysis(root, { preset, ...(videoId === undefined ? {} : { videoId }) });
 
       return back(c, to, 'Analysis started — watch the live log');
     } catch (error) {

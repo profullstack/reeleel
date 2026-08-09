@@ -125,6 +125,13 @@ export interface AnalyzeOptions {
   scoreOnly?: boolean;
   signal?: AbortSignal;
   onStage?: (stage: string, detail?: string) => void;
+  /**
+   * Called once the job row exists, before any work starts. The caller needs
+   * the id at that moment to be able to cancel the run it just kicked off;
+   * waiting for the returned result means waiting for the thing it wants to
+   * interrupt.
+   */
+  onStart?: (job: Job) => void;
 }
 
 export interface AnalyzeResult {
@@ -177,6 +184,7 @@ export const analyzeProject = async (
   }
 
   const job = await createJob(root, 'detection', { preset, videoIds: videos.map((v) => v.id) });
+  options.onStart?.(job);
   const stage = async (name: string, progress: number, detail?: string): Promise<void> => {
     options.onStage?.(name, detail);
     await updateJob(root, job.id, { status: 'running', stage: name, progress });
