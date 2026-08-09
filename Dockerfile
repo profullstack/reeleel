@@ -75,7 +75,9 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
   && mkdir -p /data/projects \
   && chown -R node:node /data
 
-VOLUME ["/data"]
+# No `VOLUME /data` here on purpose: Railway rejects the Dockerfile VOLUME
+# instruction outright ("use Railway Volumes"). The mount is declared on the
+# service instead — see README. Other runtimes can pass `-v reeleel-data:/data`.
 EXPOSE 8080
 
 # cwd is apps/web because the server resolves its static `public/` directory
