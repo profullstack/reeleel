@@ -29,6 +29,7 @@
   "packageManager": "pnpm@11.18.0",
   "scripts": {
     "build": "pnpm -r --filter \"./packages/**\" --filter \"./apps/**\" build",
+    "start": "HOST=${HOST:-0.0.0.0} pnpm --filter @reeleel/web start",
     "cli": "pnpm --filter @reeleel/cli exec tsx src/index.ts",
     "dev": "pnpm --filter @reeleel/cli dev",
     "test": "vitest",

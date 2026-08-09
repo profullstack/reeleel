@@ -147,6 +147,33 @@ pnpm db:status           # show applied vs pending
 pnpm db:migrate --scope project --path ./my-game/project.db
 ```
 
+## Deploying the web app
+
+The repo root exposes the two scripts a platform looks for:
+
+```bash
+pnpm build    # builds every package and app, including the client bundle
+pnpm start    # serves @reeleel/web (SSR pages + API) on $PORT
+```
+
+`pnpm start` binds `0.0.0.0` so a container is reachable; the app's own default
+stays on loopback, because a server that can read and delete local project
+directories should not listen on every interface unless someone asked for it.
+
+[`railway.json`](railway.json) sets the start command, a `/api/health`
+healthcheck and an on-failure restart policy.
+
+Two things to know before pointing a public URL at it:
+
+- **Container filesystems are ephemeral.** Projects and the machine registry
+  live on disk and vanish on redeploy. Set `REELEEL_DB_URL` and
+  `REELEEL_DB_AUTH_TOKEN` so the registry lives in Turso, and attach a volume
+  for project directories — otherwise treat the deploy as a demo.
+- **There is no authentication.** The API can list, modify and delete any
+  project the server can see. That is the right trade for something running on
+  your own machine and the wrong one for the open internet. Put it behind auth
+  or a private network before it holds anything real.
+
 ## Privacy and youth safety
 
 These are constraints, not preferences:
