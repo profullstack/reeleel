@@ -267,6 +267,21 @@ export const analyzeProject = async (
         let lastLogAt = 0;
 
         const onStderr = (chunk: string): void => {
+          /**
+           * The worker says useful things on stderr besides progress — which
+           * thread pool it chose, that it overrode the requested input size,
+           * which classes this model cannot produce. run() collects all of it
+           * into a string that is only ever read when the run *fails*, so on a
+           * successful run those lines reached nobody at all. They belong in
+           * the job log, where the person watching already is.
+           */
+          for (const line of chunk.split('\n')) {
+            const text = line.trim();
+            if (text.length === 0 || text.startsWith('analyzed ')) continue;
+            void logJob(root, job.id, `worker: ${text}`, text.startsWith('note:') ? 'warn' : 'info')
+              .catch(() => undefined);
+          }
+
           // A chunk can carry several lines; only the newest count matters.
           let frames: number | null = null;
           for (const match of chunk.matchAll(/analyzed (\d+) frames/g)) {
@@ -392,6 +407,35 @@ export const analyzeProject = async (
       );
     }
     stagesRun.push('scoring');
+
+    /**
+     * What the run actually produced.
+     *
+     * These numbers were computed and then discarded: analyzeProject returned
+     * them, and the web action calls it as `void analyzeProject(...)`, so a run
+     * that finished with nothing to show reported "completed" and nothing else.
+     * "It says it's done but there are no suggestions" is not then a question
+     * anyone can answer — zero moments from zero tracks and zero moments from
+     * tracks that scored too low need entirely different fixes.
+     */
+    await logJob(
+      root,
+      job.id,
+      `done: ${tracksCreated} track(s), ${momentsGenerated} suggested moment(s)`,
+      momentsGenerated === 0 ? 'warn' : 'info',
+    );
+    if (momentsGenerated === 0) {
+      await logJob(
+        root,
+        job.id,
+        tracksCreated === 0
+          ? 'No tracks were produced, so there was nothing to score. The detector found nothing it recognised in this footage.'
+          : `Tracks were found but none scored above the ${plugin.moments.minScore} threshold for ${manifest.sport}.` +
+              ' Marking an athlete to follow gives scoring an anchor and usually raises scores.',
+        'warn',
+      );
+    }
+    for (const warning of warnings) await logJob(root, job.id, warning, 'warn');
 
     const finished = await updateJob(root, job.id, {
       status: 'completed',
