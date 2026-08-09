@@ -23,6 +23,13 @@ export interface SportPlugin {
   /** Terminology shown in the UI, so a plugin can say "basket" rather than "goal". */
   terms: Record<string, string>;
   classes: SportClass[];
+  /**
+   * The class name that represents the scoring target, when the sport has a
+   * detectable one. Scoring used to look for `goal` regardless of sport, so
+   * basketball's `hoop` was invisible to it — the target signals stayed dark
+   * even for a model that could see the rim.
+   */
+  targetClass: string | null;
   tracker: {
     algorithm: string;
     maxAgeFrames: number;
@@ -105,6 +112,12 @@ interface SportSpec {
   name: string;
   /** What players move toward: goal, basket, net, end zone… */
   target: string;
+  /**
+   * The tracked class that *is* the scoring target, when it is not simply the
+   * slug of `target`. Basketball aims at the "basket" but the thing a detector
+   * sees is the "hoop"; scoring needs the class name, not the noun.
+   */
+  targetClass?: string;
   terms: Record<string, string>;
   /** Non-experimental classes beyond the universal `player`. */
   core: [string, string][];
@@ -140,6 +153,7 @@ const SPECS: SportSpec[] = [
     id: 'basketball',
     name: 'Basketball',
     target: 'basket',
+    targetClass: 'hoop',
     terms: { athlete: 'player', field: 'court', period: 'quarter', target: 'basket' },
     core: [
       ['ball', 'Basketball'],
@@ -258,6 +272,22 @@ const SPECS: SportSpec[] = [
   },
 ];
 
+/**
+ * Most sports name their target the same way a detector would — soccer aims at
+ * a "goal" and tracks a `goal`. Where the noun and the class differ, the spec
+ * says so. Anything that resolves to a class the sport does not actually track
+ * is null rather than a name nothing will ever match.
+ */
+const targetClassOf = (spec: SportSpec): string | null => {
+  const candidate = spec.targetClass ?? spec.target.trim().toLowerCase().replace(/\s+/g, '_');
+  const tracked = new Set([
+    'player',
+    ...spec.core.map(([name]) => name),
+    ...(spec.experimental ?? []).map(([name]) => name),
+  ]);
+  return tracked.has(candidate) ? candidate : null;
+};
+
 const build = (spec: SportSpec): SportPlugin => ({
   id: spec.id,
   name: spec.name,
@@ -272,6 +302,7 @@ const build = (spec: SportSpec): SportPlugin => ({
       description,
     })),
   ],
+  targetClass: targetClassOf(spec),
   tracker: {
     algorithm: 'bytetrack',
     maxAgeFrames: 30,

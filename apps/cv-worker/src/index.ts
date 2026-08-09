@@ -50,7 +50,15 @@ const number = (value: string | undefined, fallback: number): number => {
  * Two threads measured fastest and four were close; more than four only ever
  * cost time, so the pool is capped there.
  */
-const defaultThreads = (): number => Math.max(1, Math.min(4, availableParallelism()));
+const defaultThreads = (): number => {
+  const override = Number(process.env['REELEEL_CV_THREADS']);
+  if (Number.isFinite(override) && override > 0) return Math.floor(override);
+  // Production reported `cgroup-aware 24, visible cores 48`, so the old cap of
+  // four was leaving twenty cores idle. The cap now reflects where a model this
+  // small stops benefiting rather than the size of the box it was tuned on;
+  // REELEEL_CV_THREADS overrides it without a deploy.
+  return Math.max(1, Math.min(8, availableParallelism()));
+};
 
 /** Data on stdout, diagnostics on stderr — the host parses stdout as one object. */
 const emit = (payload: unknown): void => {
