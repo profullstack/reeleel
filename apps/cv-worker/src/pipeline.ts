@@ -50,6 +50,38 @@ export const createSession = async (
     graphOptimizationLevel: 'all',
   });
 
+/**
+ * The spatial size this model will actually accept.
+ *
+ * Most exported detectors — including the YOLOX-Tiny we ship — bake a fixed
+ * input shape into the graph, `[1, 3, 416, 416]`. Feeding anything else fails
+ * inside onnxruntime with "Got invalid dimensions for input", which is what
+ * every preset did: fast asked for 512, balanced 768, accurate 1280, and so
+ * detection could not succeed at all. The preset is a request, not an
+ * instruction; a model with a static shape overrules it.
+ *
+ * Returns null when the model's spatial dims are dynamic (a string or a
+ * negative number), in which case the requested size is genuinely free.
+ */
+export const staticInputSize = (session: ort.InferenceSession): number | null => {
+  const metadata = session.inputMetadata[0];
+  if (metadata === undefined || !metadata.isTensor) return null;
+
+  // NCHW: height and width are the last two dimensions.
+  const shape = metadata.shape;
+  const height = shape[shape.length - 2];
+  const width = shape[shape.length - 1];
+  const fixed = (value: unknown): number | null =>
+    typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null;
+
+  const h = fixed(height);
+  const w = fixed(width);
+  if (h === null || w === null) return null;
+  // Letterboxing assumes a square input; a non-square static model is not
+  // something this pipeline can silently accommodate.
+  return h === w ? h : Math.min(h, w);
+};
+
 export const runPipeline = async (options: PipelineOptions): Promise<PipelineResult> => {
   const ffmpeg = requireBinary('ffmpeg');
   const mapping = mappingFor(options.sport, options.classes);
@@ -61,7 +93,17 @@ export const runPipeline = async (options: PipelineOptions): Promise<PipelineRes
     throw new Error('The model exposes no input or output tensor.');
   }
 
-  const size = options.inferenceSize;
+  // The model has the final say on its own input size.
+  const required = staticInputSize(session);
+  const size = required ?? options.inferenceSize;
+  if (required !== null && required !== options.inferenceSize) {
+    // Diagnostics go to stderr; stdout is reserved for the result object.
+    process.stderr.write(
+      `note: this model has a fixed ${required}x${required} input; ` +
+        `using that instead of the requested ${options.inferenceSize}.\n`,
+    );
+  }
+
   const view = viewFor({
     input: options.input,
     ffmpegPath: ffmpeg,
