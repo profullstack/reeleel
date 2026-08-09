@@ -337,6 +337,7 @@ export const ProjectPage: FC<ProjectView> = ({
                 <th>Stage</th>
                 <th>Progress</th>
                 <th>Detail</th>
+                <th />
               </tr>
             </thead>
             <tbody>
@@ -351,6 +352,26 @@ export const ProjectPage: FC<ProjectView> = ({
                   <td class="muted">{job.stage ?? '—'}</td>
                   <td>{Math.round(job.progress * 100)}%</td>
                   <td class="muted">{job.error ?? '—'}</td>
+                  <td>
+                    {/* The same routes the live log posts to, so stop and
+                        replay work without JavaScript too. */}
+                    <div class="row">
+                      {job.status === 'running' || job.status === 'queued' ? (
+                        <form method="post" action={`${base}/jobs/${job.id}/cancel`}>
+                          <button type="submit">Stop</button>
+                        </form>
+                      ) : (
+                        <>
+                          <form method="post" action={`${base}/jobs/${job.id}/retry`}>
+                            <button type="submit">Replay</button>
+                          </form>
+                          <form method="post" action={`${base}/jobs/${job.id}/delete`}>
+                            <button type="submit">Remove</button>
+                          </form>
+                        </>
+                      )}
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
