@@ -262,8 +262,13 @@ export const analyzeProject = async (
         );
 
         if (result.code !== 0) {
+          // The worker reports its reason as JSON on stdout and signals failure
+          // through the exit code, so stderr is usually empty. Reading only
+          // stderr threw the explanation away: production logged "The CV worker
+          // failed on vid_….mp4." with nothing after it, while the worker had
+          // said exactly which model was missing and how to fetch it.
           throw new ReelEelError('WORKER_CRASHED', `The CV worker failed on ${path.basename(input)}.`, {
-            hint: result.stderr.trim().split('\n').at(-1) ?? undefined,
+            hint: cvWorkerError(result.stdout) ?? result.stderr.trim().split('\n').at(-1) ?? undefined,
             details: { exitCode: result.code },
           });
         }
@@ -346,6 +351,31 @@ export const analyzeProject = async (
     });
     throw error;
   }
+};
+
+/**
+ * Digs the worker's own explanation out of its stdout.
+ *
+ * The CV worker's protocol is "data on stdout, diagnostics on stderr", but a
+ * *failure* is data: it emits `{"error": "..."}` on stdout and signals the
+ * failure through its exit code, leaving stderr empty. A caller that inspects
+ * only stderr therefore discards the one useful sentence — which is how
+ * production came to log "The CV worker failed on vid_….mp4." and nothing else.
+ */
+export const cvWorkerError = (stdout: string): string | undefined => {
+  const lines = stdout.trim().split('\n');
+  // Scan from the end: the failure is the last thing the worker managed to say.
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index]?.trim();
+    if (line === undefined || line.length === 0) continue;
+    try {
+      const parsed = JSON.parse(line) as { error?: unknown };
+      if (typeof parsed.error === 'string' && parsed.error.length > 0) return parsed.error;
+    } catch {
+      // Not JSON — the worker may have died before emitting anything.
+    }
+  }
+  return undefined;
 };
 
 /** Proxy height encoded in the filename by `generateProxy` (`<id>_540p.mp4`). */
