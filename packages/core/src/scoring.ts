@@ -176,7 +176,17 @@ export const buildContext = (input: ScoringInput, targetClass: string | null = '
   };
 };
 
-type SignalFn = (context: SignalContext, ts: number) => number;
+/**
+ * A signal's strength in [0,1], or null when it cannot be measured at all.
+ *
+ * The distinction matters more than it looks. "Measured, and nothing was
+ * happening" is a zero that should pull the score down. "There is no hoop in
+ * this footage, and no audio track" is not evidence of a dull moment — yet
+ * dividing by its weight anyway charged every window for it. With the shipped
+ * COCO model, which produces only players and a ball, that dead weight was
+ * enough to hold a genuine possession below the threshold.
+ */
+type SignalFn = (context: SignalContext, ts: number) => number | null;
 
 /**
  * Each signal returns 0..1 strength at a moment in time. Weights come from the
@@ -184,7 +194,7 @@ type SignalFn = (context: SignalContext, ts: number) => number;
  */
 export const SIGNALS: Record<string, SignalFn> = {
   player_ball_proximity: (context, ts) => {
-    if (context.focal === null || context.ball === null) return 0;
+    if (context.focal === null || context.ball === null) return null;
     const player = sampleAt(context.focal, ts);
     const ball = sampleAt(context.ball, ts);
     if (player === null || ball === null) return 0;
@@ -194,7 +204,7 @@ export const SIGNALS: Record<string, SignalFn> = {
   },
 
   ball_approaching_player: (context, ts) => {
-    if (context.focal === null || context.ball === null) return 0;
+    if (context.focal === null || context.ball === null) return null;
     const player = sampleAt(context.focal, ts);
     const ball = sampleAt(context.ball, ts);
     const ballVelocity = velocityAt(context.ball, ts);
@@ -205,7 +215,7 @@ export const SIGNALS: Record<string, SignalFn> = {
   },
 
   player_acceleration: (context, ts) => {
-    if (context.focal === null) return 0;
+    if (context.focal === null) return null;
     const before = velocityAt(context.focal, ts - 0.5);
     const after = velocityAt(context.focal, ts + 0.5);
     if (before === null || after === null) return 0;
@@ -215,7 +225,7 @@ export const SIGNALS: Record<string, SignalFn> = {
   },
 
   toward_goal: (context, ts) => {
-    if (context.focal === null || context.goals.length === 0) return 0;
+    if (context.focal === null || context.goals.length === 0) return null;
     const player = sampleAt(context.focal, ts);
     const velocity = velocityAt(context.focal, ts);
     if (player === null || velocity === null || magnitude(velocity) < 1) return 0;
@@ -233,7 +243,7 @@ export const SIGNALS: Record<string, SignalFn> = {
   },
 
   activity_near_goal: (context, ts) => {
-    if (context.goals.length === 0) return 0;
+    if (context.goals.length === 0) return null;
     const goalPoints = context.goals
       .map((goal) => sampleAt(goal, ts))
       .filter((p): p is Point => p !== null);
@@ -249,7 +259,7 @@ export const SIGNALS: Record<string, SignalFn> = {
   },
 
   high_motion: (context, ts) => {
-    if (context.baselineSpeed <= 0) return 0;
+    if (context.others.length === 0 || context.baselineSpeed <= 0) return null;
     const speeds = context.others
       .map((track) => velocityAt(track, ts))
       .filter((v): v is Point => v !== null)
@@ -261,7 +271,7 @@ export const SIGNALS: Record<string, SignalFn> = {
 
   audio_spike: (context, ts) => {
     const samples = context.input.audioEnergy;
-    if (samples === undefined || samples.length === 0) return 0;
+    if (samples === undefined || samples.length === 0) return null;
     const window = samples.filter((sample) => Math.abs(sample.ts - ts) <= 1);
     if (window.length === 0) return 0;
     return clamp01(Math.max(...window.map((sample) => sample.value)));
@@ -278,20 +288,39 @@ export const scoreWindow = (
   let total = 0;
   let weightSum = 0;
 
+  let definedWeight = 0;
+
   for (const [id, signal] of Object.entries(SIGNALS)) {
     const weight = weights.get(id);
     if (weight === undefined || weight <= 0) continue;
-    weightSum += weight;
+    definedWeight += weight;
+
     const strength = signal(context, ts);
+    // Unmeasurable: no hoop in frame, no audio track, no athlete identified.
+    // It neither contributes nor counts against.
+    if (strength === null) continue;
+
+    weightSum += weight;
     if (strength <= 0) continue;
     total += strength * weight;
     // Only name a reason once it actually contributed something visible.
     if (strength >= 0.4) reasons.push(id);
   }
 
+  /**
+   * A floor under the denominator, so a single measurable signal cannot carry a
+   * moment on its own. Without it, footage with no athlete identified would be
+   * scored on scene motion alone — every scramble becomes a highlight — because
+   * that one signal would be the whole of the denominator as well as the whole
+   * of the numerator. Half the defined weight keeps "identify your athlete"
+   * genuinely necessary while no longer charging a window for evidence that
+   * could never have existed.
+   */
+  const floor = definedWeight * 0.5;
+
   return {
     ts,
-    score: weightSum > 0 ? clamp01(total / weightSum) : 0,
+    score: weightSum > 0 ? clamp01(total / Math.max(weightSum, floor)) : 0,
     reasons,
   };
 };

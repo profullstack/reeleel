@@ -18,10 +18,13 @@ import {
   createReel,
   getJob,
   isReelEelError,
+  listAthleteCandidates,
+  listAthletes,
   listExports,
   listJobLogsSince,
   listJobs,
   listRecentJobLogs,
+  listVideos,
   loadConfig,
   nowIso,
   projectDir,
@@ -32,6 +35,7 @@ import {
   removeVideo,
   renderReel,
   resolveProjectRoot,
+  thumbnailPath,
   updateAthlete,
   updateMoment,
   updateProject,
@@ -222,13 +226,18 @@ const uploadFailed = (
 const runningAnalyses = new Map<string, AbortController>();
 
 /** Kicks off an analysis and keeps hold of its cancel handle. */
-const startAnalysis = (root: string, options: { preset: Preset; videoId?: string }): void => {
+const startAnalysis = (
+  root: string,
+  options: { preset: Preset; videoId?: string; scoreOnly?: boolean },
+): void => {
   const controller = new AbortController();
   let jobId: string | null = null;
 
   void analyzeProject(root, {
     preset: options.preset,
     ...(options.videoId === undefined ? {} : { videoId: options.videoId }),
+    // Re-scoring reuses the detection that already ran: seconds, not minutes.
+    ...(options.scoreOnly === true ? { scoreOnly: true } : {}),
     signal: controller.signal,
     onStart: (job) => {
       jobId = job.id;
@@ -416,6 +425,101 @@ export const registerActions = (app: Hono): void => {
       return c.json({ ok: false, code: 'NOT_FOUND', error: 'No such upload.' }, 404);
     }
     return c.json({ ok: true, upload: view(record) });
+  });
+
+  // ── Identifying the athlete ───────────────────────────────────────────────
+  //
+  // A detector cannot know which of twenty children on a court is yours.
+  // Somebody has to say so once. Until that happens `focal_track_id` is null,
+  // and scoring — which reads the track, not the is_focal flag — is capped
+  // below its own threshold no matter what detection found.
+
+  /** Tracks worth offering as "that one is mine", longest-lived first. */
+  app.get('/projects/:ref/candidates', async (c) => {
+    try {
+      const root = await rootOf(c);
+      const videoId = c.req.query('videoId');
+      const candidates = await listAthleteCandidates(root, {
+        ...(videoId === undefined ? {} : { videoId }),
+      });
+      const athletes = await listAthletes(root);
+      return c.json({
+        ok: true,
+        candidates,
+        athletes: athletes.map((athlete) => ({
+          id: athlete.id,
+          name: athlete.name,
+          jerseyNumber: athlete.jerseyNumber,
+          isFocal: athlete.isFocal,
+          focalTrackId: athlete.focalTrackId,
+        })),
+      });
+    } catch (error) {
+      return uploadJson(c, error);
+    }
+  });
+
+  /** One thumbnail frame. Path comes from the video id, never from the client. */
+  app.get('/projects/:ref/videos/:id/thumb/:n', async (c) => {
+    try {
+      const root = await rootOf(c);
+      const videoId = c.req.param('id') ?? '';
+      const index = Number(c.req.param('n'));
+      if (!Number.isInteger(index) || index < 1 || index > 10_000) {
+        return c.text('Bad frame index', 400);
+      }
+      // The id is checked against the project's own videos, so a crafted id
+      // cannot walk out of the thumbnails directory.
+      const known = (await listVideos(root)).some((video) => video.id === videoId);
+      if (!known) return c.text('No such video', 404);
+
+      const file = thumbnailPath(root, videoId, index);
+      if (!existsSync(file)) return c.text('No such frame', 404);
+
+      c.header('content-type', 'image/jpeg');
+      // Thumbnails are regenerated wholesale, so a long cache is safe within a run.
+      c.header('cache-control', 'private, max-age=300');
+      return c.body(Readable.toWeb(createReadStream(file)) as ReadableStream);
+    } catch {
+      return c.text('Not available', 404);
+    }
+  });
+
+  /**
+   * Binds an athlete to a track, then re-scores.
+   *
+   * Re-scoring runs with scoreOnly, so it reuses the detection that already
+   * happened — seconds rather than another full pass. Identifying your athlete
+   * should not cost another minute of inference.
+   */
+  app.post('/projects/:ref/athletes/:id/track', async (c) => {
+    const bad = await guard(c);
+    if (bad !== null) return bad;
+    const ref = c.req.param('ref') ?? '';
+    const to = `/projects/${encodeURIComponent(ref)}`;
+
+    try {
+      const root = await rootOf(c);
+      const body = c.req.header('content-type')?.includes('application/json') === true
+        ? ((await c.req.json().catch(() => ({}))) as { trackId?: string })
+        : { trackId: field(await c.req.parseBody(), 'trackId') };
+
+      const trackId = typeof body.trackId === 'string' ? body.trackId.trim() : '';
+      if (trackId.length === 0) throw new UploadError('INVALID_INPUT', 'Choose a track first.');
+
+      const athleteId = c.req.param('id') ?? '';
+      // Following and being bound to a track are different things; a picked
+      // athlete is obviously the one to follow.
+      await updateAthlete(root, athleteId, { focalTrackId: trackId, focal: true });
+
+      startAnalysis(root, { preset: 'balanced', scoreOnly: true });
+
+      if (prefersJson(c)) return c.json({ ok: true, athleteId, trackId });
+      return back(c, to, 'Athlete identified — re-scoring with them as the focus');
+    } catch (error) {
+      if (prefersJson(c)) return uploadJson(c, error);
+      return back(c, to, undefined, failed(error));
+    }
   });
 
   // ── Job controls: stop, replay, discard ───────────────────────────────────
