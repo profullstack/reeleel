@@ -136,6 +136,60 @@ export const getJobLogs = async (
   return rows.reverse();
 };
 
+/** A log line with its rowid, which is what makes an incremental feed possible. */
+export interface JobLogLine extends JobLogEntry {
+  id: number;
+  jobId: string;
+}
+
+interface JobLogRow {
+  id: number;
+  job_id: string;
+  at: string;
+  level: string;
+  message: string;
+}
+
+const toLogLine = (row: JobLogRow): JobLogLine => ({
+  id: toNumber(row.id),
+  jobId: row.job_id,
+  at: row.at,
+  level: row.level,
+  message: row.message,
+});
+
+/**
+ * Everything logged after `afterId`, across every job in the project.
+ *
+ * The cursor is the point: a live feed has to be able to say "what happened
+ * since I last looked" without re-sending the whole history or missing a line
+ * that landed between polls.
+ */
+export const listJobLogsSince = async (
+  root: string,
+  afterId: number,
+  limit = 500,
+): Promise<JobLogLine[]> => {
+  const db = await projectDb(root);
+  const rows = await all<JobLogRow>(
+    db,
+    'SELECT id, job_id, at, level, message FROM job_logs WHERE id > ? ORDER BY id ASC LIMIT ?',
+    [afterId, limit],
+  );
+  return rows.map(toLogLine);
+};
+
+/** The tail of the log, for giving a newly-opened feed some context. */
+export const listRecentJobLogs = async (root: string, limit = 100): Promise<JobLogLine[]> => {
+  const db = await projectDb(root);
+  const rows = await all<JobLogRow>(
+    db,
+    'SELECT id, job_id, at, level, message FROM job_logs ORDER BY id DESC LIMIT ?',
+    [limit],
+  );
+  return rows.reverse().map(toLogLine);
+};
+
 export interface ListJobsOptions {
   status?: JobStatus;
   kind?: JobKind;

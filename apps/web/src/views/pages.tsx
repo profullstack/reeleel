@@ -5,6 +5,7 @@ import type {
   Athlete,
   Check,
   Clip,
+  ExportRecord,
   Job,
   ProjectSummary,
   SourceVideo,
@@ -120,6 +121,8 @@ export interface ProjectView {
   moments: SuggestedMoment[];
   clips: Clip[];
   jobs: Job[];
+  /** Newest first, so "the latest export" is simply the first one. */
+  exports: ExportRecord[];
   flash: Flash;
 }
 
@@ -130,6 +133,7 @@ export const ProjectPage: FC<ProjectView> = ({
   moments,
   clips,
   jobs,
+  exports,
   flash,
 }) => {
   const base = `/projects/${encodeURIComponent(project.id)}`;
@@ -282,6 +286,27 @@ export const ProjectPage: FC<ProjectView> = ({
       <h2>Analysis</h2>
       <form method="post" action={`${base}/analyze`} class="card">
         <div class="row">
+          {/* Analysis used to run over every imported video, which makes one bad
+              file take the whole run down with it and re-analyses footage that
+              was already done. Newest first and selected by default, because
+              the thing just imported is almost always the thing to analyse. */}
+          <label for="videoId" style="margin:0">
+            Footage
+          </label>
+          <select
+            id="videoId"
+            name="videoId"
+            style="font:inherit;padding:.35rem;border-radius:.4rem;max-width:18rem"
+          >
+            {[...videos].reverse().map((video, index) => (
+              <option key={video.id} value={video.id} selected={index === 0}>
+                {video.path.split('/').pop()}
+                {index === 0 ? ' (latest)' : ''}
+              </option>
+            ))}
+            <option value="all">All footage</option>
+          </select>
+
           <label for="preset" style="margin:0">
             Preset
           </label>
@@ -299,37 +324,44 @@ export const ProjectPage: FC<ProjectView> = ({
         {videos.length === 0 ? <p class="muted">Import footage first.</p> : null}
       </form>
 
-      {jobs.length === 0 ? null : (
-        <table>
-          <thead>
-            <tr>
-              <th>Job</th>
-              <th>Status</th>
-              <th>Stage</th>
-              <th>Progress</th>
-            </tr>
-          </thead>
-          <tbody>
-            {jobs.slice(0, 5).map((job) => (
-              <tr key={job.id}>
-                <td>{job.kind}</td>
-                <td>
-                  <span class={`pill ${job.status === 'completed' ? 'keep' : job.status === 'failed' ? 'reject' : ''}`}>
-                    {job.status}
-                  </span>
-                </td>
-                <td class="muted">{job.stage ?? '—'}</td>
-                <td>{Math.round(job.progress * 100)}%</td>
+      {/* Replaced by the live SSE log on mount. What is rendered here is the
+          no-JavaScript view: the same jobs, including — unlike before — the
+          reason a failed one failed. */}
+      <div id="job-log" data-base={base}>
+        {jobs.length === 0 ? null : (
+          <table>
+            <thead>
+              <tr>
+                <th>Job</th>
+                <th>Status</th>
+                <th>Stage</th>
+                <th>Progress</th>
+                <th>Detail</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-      {jobs.some((job) => job.status === 'running' || job.status === 'queued') ? (
-        <p class="muted">
-          Analysis is running. <a href={base}>Refresh</a> for progress.
-        </p>
-      ) : null}
+            </thead>
+            <tbody>
+              {jobs.slice(0, 5).map((job) => (
+                <tr key={job.id}>
+                  <td>{job.kind}</td>
+                  <td>
+                    <span class={`pill ${job.status === 'completed' ? 'keep' : job.status === 'failed' ? 'reject' : ''}`}>
+                      {job.status}
+                    </span>
+                  </td>
+                  <td class="muted">{job.stage ?? '—'}</td>
+                  <td>{Math.round(job.progress * 100)}%</td>
+                  <td class="muted">{job.error ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {jobs.some((job) => job.status === 'running' || job.status === 'queued') ? (
+          <p class="muted">
+            Analysis is running. <a href={base}>Refresh</a> for progress.
+          </p>
+        ) : null}
+      </div>
 
       <h2>Suggested moments</h2>
       {moments.length === 0 ? (
@@ -394,6 +426,42 @@ export const ProjectPage: FC<ProjectView> = ({
           </div>
         </form>
       </div>
+
+      {/* Exports were written to the server's disk and never shown, so a render
+          that replaced an earlier one did so invisibly. Newest first; every
+          version is kept and downloadable. */}
+      {exports.length === 0 ? null : (
+        <table>
+          <thead>
+            <tr>
+              <th>Export</th>
+              <th>Aspect</th>
+              <th>Created</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {exports.map((record, index) => (
+              <tr key={record.id}>
+                <td>
+                  <code>{record.path.split('/').pop()}</code>
+                  {index === 0 ? <span class="pill keep"> latest</span> : null}
+                </td>
+                <td>{record.aspect}</td>
+                <td class="muted">{record.createdAt.replace('T', ' ').slice(0, 16)}</td>
+                <td>
+                  <div class="row">
+                    <a href={`${base}/exports/${record.id}/download`}>Download</a>
+                    <form method="post" action={`${base}/exports/${record.id}/delete`}>
+                      <button type="submit">Delete</button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
 
       <h2>Settings</h2>
       <details class="card">

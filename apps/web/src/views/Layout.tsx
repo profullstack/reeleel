@@ -87,6 +87,35 @@ const STYLES = `
   .upload-meta { margin-top: .4rem; font-size: .85rem; }
   .upload-error { display: inline-block; margin: .5rem 0 0; padding: .3rem .6rem; }
   .upload-total { margin: .75rem 0 .25rem; display: grid; gap: .3rem; }
+  /* ── Live job log ──────────────────────────────────────────────────────── */
+  .job-head { margin: .25rem 0 .6rem; }
+  .job-card { margin-bottom: .5rem; }
+  .live-live { color: var(--keep); border-color: currentColor; }
+  .live-live::before,
+  .live-connecting::before,
+  .live-offline::before,
+  .live-idle::before {
+    content: ''; display: inline-block; width: .45rem; height: .45rem;
+    border-radius: 999px; background: currentColor; margin-right: .35rem;
+    vertical-align: baseline;
+  }
+  .live-live::before { animation: pulse 1.6s ease-in-out infinite; }
+  .live-offline { color: var(--reject); border-color: currentColor; }
+  .live-idle, .live-connecting { color: var(--muted); }
+  @keyframes pulse { 50% { opacity: .25; } }
+  .log-pane {
+    margin-top: .75rem; max-height: 18rem; overflow-y: auto;
+    background: var(--card); border: 1px solid var(--line); border-radius: .5rem;
+    padding: .6rem .75rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem;
+    overflow-wrap: anywhere;
+  }
+  .log-line { display: flex; gap: .6rem; padding: .05rem 0; }
+  .log-time { color: var(--muted); flex: none; font-variant-numeric: tabular-nums; }
+  .log-warn .log-message { color: #b45309; }
+  .log-error .log-message { color: var(--reject); }
+  @media (prefers-reduced-motion: reduce) { .live-live::before { animation: none; } }
+
   .stored-uploads { margin-top: 1.25rem; padding-top: .5rem; border-top: 1px solid var(--line); }
   .stored-uploads h3 { font-size: .9rem; margin: .5rem 0; color: var(--muted); font-weight: 600; }
   progress {
