@@ -5,19 +5,45 @@ import { fileURLToPath } from 'node:url';
 
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 
 import {
+  DEFAULT_SESSION_SECONDS,
+  MIN_PASSWORD_LENGTH,
+  UserError,
+  baseUrl,
+  checkPasswordStrength,
+  clearUserCookie,
   clientKey,
+  consumeToken,
   createApp as createApiApp,
-  endSession,
-  isAuthEnabled,
+  createMailer,
+  createUser,
+  createUserSession,
+  currentUser,
+  findUserByEmail,
+  findUserById,
+  issueToken,
   loginAttemptAllowed,
+  markEmailVerified,
+  originAllowed,
   readAuthConfig,
+  readEmailConfig,
+  readUserCookie,
   requireAuth,
+  requireVerifiedEmail,
+  resetEmail,
   resetLoginAttempts,
-  safeEqual,
-  startSession,
+  resolveUserFromRequest,
+  revokeSession,
+  scopeFor,
+  setPassword,
+  setUserCookie,
+  signupAllowed,
+  verificationEmail,
+  verifyLogin,
 } from '@reeleel/api';
+import type { AuthUser } from '@reeleel/api';
 import {
   isReelEelError,
   listMoments,
@@ -29,7 +55,8 @@ import {
   worstStatus,
 } from '@reeleel/core';
 
-import { DoctorPage, ErrorPage, LoginPage, ProjectPage, ProjectsPage } from './views/pages.js';
+import { ForgotPage, LoginPage, MessagePage, RegisterPage, ResetPage, VerifyNoticePage } from './views/auth.js';
+import { DoctorPage, ErrorPage, ProjectPage, ProjectsPage } from './views/pages.js';
 
 const publicDir = path.join(fileURLToPath(new URL('../', import.meta.url)), 'public');
 
@@ -44,14 +71,34 @@ export const safeRedirect = (value: unknown): string => {
   return value;
 };
 
-/**
- * One process serves both halves: SSR pages for readability and the API for the
- * client island. Splitting them across ports is a deployment choice, not an
- * architectural one — `@reeleel/api` is its own package either way.
- */
+const field = (body: Record<string, unknown>, name: string): string => {
+  const value = body[name];
+  return typeof value === 'string' ? value : '';
+};
+
 export const createWebApp = (): Hono => {
   const app = new Hono();
   const auth = readAuthConfig();
+  const email = readEmailConfig();
+  const mailer = createMailer(email);
+  const verificationRequired = requireVerifiedEmail();
+
+  /** Issues a fresh verification link and tries to deliver it. */
+  const sendVerification = async (
+    c: Context,
+    user: { id: string; email: string },
+  ): Promise<boolean> => {
+    const token = await issueToken(user.id, 'verify');
+    const link = `${baseUrl(email, c.req.url)}/verify?token=${encodeURIComponent(token)}`;
+    try {
+      await mailer.send({ to: user.email, ...verificationEmail(link) });
+      return mailer.configured;
+    } catch (error) {
+      // A delivery failure must not lose the account that was just created.
+      process.stderr.write(`verification email failed: ${String(error)}\n`);
+      return false;
+    }
+  };
 
   app.route('/', createApiApp({ auth }));
 
@@ -63,58 +110,255 @@ export const createWebApp = (): Hono => {
     }),
   );
 
-  app.get('/login', (c) => {
-    if (!isAuthEnabled(auth)) return c.redirect('/');
-    return c.html(<LoginPage next={safeRedirect(c.req.query('next'))} />);
+  // ── Sign in ───────────────────────────────────────────────────────────────
+
+  app.get('/login', async (c) => {
+    if ((await resolveUserFromRequest(c)) !== null) return c.redirect('/');
+    return c.html(
+      <LoginPage next={safeRedirect(c.req.query('next'))} signupAllowed={signupAllowed()} />,
+    );
   });
 
   app.post('/login', async (c) => {
-    if (!isAuthEnabled(auth) || auth.token === null) return c.redirect('/');
+    if (!originAllowed(c)) return c.text('Bad origin', 403);
 
     const body = await c.req.parseBody();
     const next = safeRedirect(body['next']);
+    const address = field(body, 'email');
 
     if (!loginAttemptAllowed(clientKey(c))) {
       return c.html(
-        <LoginPage error="Too many attempts. Wait a few minutes and try again." next={next} />,
+        <LoginPage error="Too many attempts. Wait a few minutes." next={next} email={address} />,
         429,
       );
     }
 
-    const presented = body['token'];
-    if (typeof presented !== 'string' || !safeEqual(presented, auth.token)) {
-      // Deliberately vague: there is one secret, so "which part was wrong" is
-      // not a useful distinction to leak.
-      return c.html(<LoginPage error="That token is not valid." next={next} />, 401);
+    const user = await verifyLogin(address, field(body, 'password'));
+    if (user === null) {
+      // One message for both wrong-password and no-such-account: distinguishing
+      // them turns the form into an account-existence oracle.
+      return c.html(
+        <LoginPage error="Those details do not match an account." next={next} email={address} />,
+        401,
+      );
     }
 
     resetLoginAttempts(clientKey(c));
-    startSession(c, auth);
+    setUserCookie(c, await createUserSession(user.id), DEFAULT_SESSION_SECONDS);
     return c.redirect(next);
   });
 
-  app.get('/logout', (c) => {
-    endSession(c);
-    return c.redirect(isAuthEnabled(auth) ? '/login' : '/');
+  app.get('/logout', async (c) => {
+    const secret = readUserCookie(c);
+    if (secret !== null) await revokeSession(secret);
+    clearUserCookie(c);
+    return c.redirect('/login');
   });
 
-  // Pages redirect to the login form rather than returning a bare 401, so a
-  // browser lands somewhere useful. The API keeps its JSON 401.
+  // ── Register ──────────────────────────────────────────────────────────────
+
+  app.get('/register', async (c) => {
+    if (!signupAllowed()) {
+      return c.html(
+        <MessagePage
+          title="Registration is closed"
+          body="This ReelEel instance is not accepting new accounts."
+          linkHref="/login"
+          linkText="Sign in"
+        />,
+        403,
+      );
+    }
+    if ((await resolveUserFromRequest(c)) !== null) return c.redirect('/');
+    return c.html(<RegisterPage minPasswordLength={MIN_PASSWORD_LENGTH} />);
+  });
+
+  app.post('/register', async (c) => {
+    if (!originAllowed(c)) return c.text('Bad origin', 403);
+    if (!signupAllowed()) return c.text('Registration is closed', 403);
+
+    const body = await c.req.parseBody();
+    const address = field(body, 'email');
+    const password = field(body, 'password');
+
+    if (!loginAttemptAllowed(`register:${clientKey(c)}`)) {
+      return c.html(
+        <RegisterPage
+          error="Too many attempts. Wait a few minutes."
+          email={address}
+          minPasswordLength={MIN_PASSWORD_LENGTH}
+        />,
+        429,
+      );
+    }
+
+    const strength = checkPasswordStrength(password);
+    if (!strength.ok) {
+      return c.html(
+        <RegisterPage
+          error={strength.reason ?? 'Choose a stronger password.'}
+          email={address}
+          minPasswordLength={MIN_PASSWORD_LENGTH}
+        />,
+        400,
+      );
+    }
+
+    try {
+      const user = await createUser({ email: address, password });
+      const delivered = await sendVerification(c, user);
+      setUserCookie(c, await createUserSession(user.id), DEFAULT_SESSION_SECONDS);
+      return c.html(<VerifyNoticePage email={user.email} sent={false} delivered={delivered} />);
+    } catch (error) {
+      if (error instanceof UserError) {
+        return c.html(
+          <RegisterPage
+            error={error.message}
+            email={address}
+            minPasswordLength={MIN_PASSWORD_LENGTH}
+          />,
+          409,
+        );
+      }
+      throw error;
+    }
+  });
+
+  // ── Email verification ────────────────────────────────────────────────────
+
+  app.get('/verify', async (c) => {
+    const token = c.req.query('token') ?? '';
+    const userId = await consumeToken(token, 'verify');
+    if (userId === null) {
+      return c.html(
+        <MessagePage
+          title="That link has expired"
+          body="Verification links last 24 hours and can only be used once. Sign in to request a new one."
+          linkHref="/login"
+          linkText="Sign in"
+        />,
+        400,
+      );
+    }
+    await markEmailVerified(userId);
+    return c.html(
+      <MessagePage
+        title="Email confirmed"
+        body="Your address is confirmed and your account is ready."
+        linkHref="/"
+        linkText="Go to your projects"
+      />,
+    );
+  });
+
+  app.post('/verify/resend', async (c) => {
+    if (!originAllowed(c)) return c.text('Bad origin', 403);
+
+    const user = await resolveUserFromRequest(c);
+    if (user === null) return c.redirect('/login');
+    if (user.emailVerifiedAt !== null) return c.redirect('/');
+
+    const delivered = await sendVerification(c, user);
+    return c.html(<VerifyNoticePage email={user.email} sent delivered={delivered} />);
+  });
+
+  // ── Password reset ────────────────────────────────────────────────────────
+
+  app.get('/forgot', (c) => c.html(<ForgotPage />));
+
+  app.post('/forgot', async (c) => {
+    if (!originAllowed(c)) return c.text('Bad origin', 403);
+
+    const body = await c.req.parseBody();
+    const address = field(body, 'email');
+
+    if (!loginAttemptAllowed(`forgot:${clientKey(c)}`)) {
+      return c.html(<ForgotPage error="Too many attempts. Wait a few minutes." />, 429);
+    }
+
+    // Always report the same outcome, whether or not the account exists.
+    const user = await findUserByEmail(address);
+    if (user !== null) {
+      const token = await issueToken(user.id, 'reset');
+      const link = `${baseUrl(email, c.req.url)}/reset?token=${encodeURIComponent(token)}`;
+      try {
+        await mailer.send({ to: user.email, ...resetEmail(link) });
+      } catch (error) {
+        process.stderr.write(`reset email failed: ${String(error)}\n`);
+      }
+    }
+    return c.html(<ForgotPage sent />);
+  });
+
+  app.get('/reset', (c) => {
+    const token = c.req.query('token') ?? '';
+    if (token.length === 0) return c.redirect('/forgot');
+    return c.html(<ResetPage token={token} minPasswordLength={MIN_PASSWORD_LENGTH} />);
+  });
+
+  app.post('/reset', async (c) => {
+    if (!originAllowed(c)) return c.text('Bad origin', 403);
+
+    const body = await c.req.parseBody();
+    const token = field(body, 'token');
+    const password = field(body, 'password');
+
+    const strength = checkPasswordStrength(password);
+    if (!strength.ok) {
+      return c.html(
+        <ResetPage
+          token={token}
+          error={strength.reason ?? 'Choose a stronger password.'}
+          minPasswordLength={MIN_PASSWORD_LENGTH}
+        />,
+        400,
+      );
+    }
+
+    const userId = await consumeToken(token, 'reset');
+    if (userId === null) {
+      return c.html(
+        <MessagePage
+          title="That link has expired"
+          body="Reset links last an hour and can only be used once."
+          linkHref="/forgot"
+          linkText="Request another"
+        />,
+        400,
+      );
+    }
+
+    // setPassword revokes every existing session, including any the attacker
+    // might hold, so the reset genuinely takes the account back.
+    await setPassword(userId, password);
+    const user = await findUserById(userId);
+    if (user !== null && user.emailVerifiedAt === null) await markEmailVerified(userId);
+
+    clearUserCookie(c);
+    setUserCookie(c, await createUserSession(userId), DEFAULT_SESSION_SECONDS);
+    return c.redirect('/');
+  });
+
+  // ── Everything below needs an account ─────────────────────────────────────
+
   app.use(
     '*',
     requireAuth({
       config: auth,
+      resolveUser: resolveUserFromRequest,
+      requireVerifiedEmail: verificationRequired,
       onUnauthorized: (c) => {
         const url = new URL(c.req.url);
-        const next = encodeURIComponent(`${url.pathname}${url.search}`);
-        return c.redirect(`/login?next=${next}`);
+        return c.redirect(`/login?next=${encodeURIComponent(`${url.pathname}${url.search}`)}`);
       },
+      onUnverified: (c, user: AuthUser) =>
+        c.html(<VerifyNoticePage email={user.email} sent={false} delivered={mailer.configured} />, 403),
     }),
   );
 
   app.get('/', async (c) => {
     try {
-      return c.html(<ProjectsPage projects={await listProjects()} />);
+      return c.html(<ProjectsPage projects={await listProjects(scopeFor(c))} />);
     } catch (error) {
       return c.html(<ErrorPage message={String(error)} />, 500);
     }
@@ -130,7 +374,7 @@ export const createWebApp = (): Hono => {
       const ref = c.req.param('ref');
       if (ref === undefined) return c.html(<ErrorPage message="No project given." />, 400);
 
-      const root = await resolveProjectRoot(decodeURIComponent(ref));
+      const root = await resolveProjectRoot(decodeURIComponent(ref), scopeFor(c));
       const [project, videos, moments] = await Promise.all([
         summarizeProject(root),
         listVideos(root),
@@ -151,3 +395,4 @@ export const createWebApp = (): Hono => {
 };
 
 export const clientBundleExists = (): boolean => existsSync(path.join(publicDir, 'client.js'));
+export { currentUser };

@@ -53,6 +53,22 @@ const STYLES = `
   }
   button:hover { border-color: var(--accent); color: var(--accent); }
   button[disabled] { opacity: .5; cursor: default; }
+  label { display: block; font-size: .82rem; color: var(--muted); margin-bottom: .25rem; }
+  input[type="text"], input[type="email"], input[type="password"] {
+    font: inherit; width: 100%; padding: .45rem .6rem; border-radius: .4rem;
+    border: 1px solid var(--line); background: var(--bg); color: inherit;
+  }
+  input:focus-visible, button:focus-visible, a:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  .field { margin-bottom: .85rem; }
+  .narrow { max-width: 24rem; }
+  .actions { display: flex; align-items: center; gap: 1rem; margin-top: 1rem; }
+  .notice {
+    border-left: 3px solid var(--accent); padding: .5rem .75rem; margin: .75rem 0;
+    background: var(--card);
+  }
+  .error { border-left-color: var(--reject); color: var(--reject); }
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid var(--line); }
   th { color: var(--muted); font-weight: 500; font-size: .8rem; }

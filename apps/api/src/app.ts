@@ -30,12 +30,22 @@ import {
   worstStatus,
 } from '@reeleel/core';
 
-import { readAuthConfig, requireAuth } from './auth.js';
+import {
+  ownerFor,
+  requireVerifiedEmail,
+  resolveUserFromRequest,
+  scopeFor,
+} from './accounts.js';
+import { currentUser, readAuthConfig, requireAuth } from './auth.js';
 import type { AuthConfig } from './auth.js';
 import { errorResponse, handle } from './errors.js';
 
-// The web app shares this auth implementation rather than reimplementing it.
+// The web app shares this implementation rather than reimplementing it.
 export * from './auth.js';
+export * from './accounts.js';
+export * from './email.js';
+export * from './passwords.js';
+export * from './users.js';
 
 /**
  * The API is a thin shell over @reeleel/core — deliberately. Any logic that
@@ -63,9 +73,27 @@ export const createApp = (options: CreateAppOptions = {}): Hono => {
   // page request falls through to the web app's own guard and gets redirected
   // to the login form instead of a JSON 401. Public paths (/api/health) are
   // still exempted inside the middleware.
-  app.use('/api/*', requireAuth({ config: auth }));
+  app.use(
+    '/api/*',
+    requireAuth({
+      config: auth,
+      resolveUser: resolveUserFromRequest,
+      requireVerifiedEmail: requireVerifiedEmail(),
+    }),
+  );
 
   app.get('/api/health', (c) => c.json({ ok: true, service: 'reeleel-api', version: '0.1.0' }));
+
+  app.get('/api/me', (c) => {
+    const user = currentUser(c);
+    return c.json({
+      ok: true,
+      user:
+        user === null
+          ? null
+          : { id: user.id, email: user.email, emailVerified: user.emailVerifiedAt !== null },
+    });
+  });
 
   app.get(
     '/api/doctor',
@@ -87,7 +115,7 @@ export const createApp = (options: CreateAppOptions = {}): Hono => {
 
   app.get(
     '/api/projects',
-    handle(async () => ({ projects: await listProjects() })),
+    handle(async (c) => ({ projects: await listProjects(scopeFor(c)) })),
   );
 
   app.post(
@@ -103,12 +131,14 @@ export const createApp = (options: CreateAppOptions = {}): Hono => {
       if (typeof body.name !== 'string' || body.name.trim().length === 0) {
         throw new Error('A project name is required.');
       }
+      const owner = ownerFor(c);
       const created = await createProject({
         name: body.name,
         ...(body.sport === undefined ? {} : { sport: body.sport }),
         ...(body.path === undefined ? {} : { path: body.path }),
         ...(body.opponent === undefined ? {} : { opponent: body.opponent }),
         ...(body.gameDate === undefined ? {} : { gameDate: body.gameDate }),
+        ...(owner === undefined ? {} : { ownerId: owner }),
       });
       return { project: created.manifest, root: created.root };
     }),
@@ -125,9 +155,13 @@ export const createApp = (options: CreateAppOptions = {}): Hono => {
     return value;
   };
 
-  /** Project references are opaque strings (path, id or name) and must be encoded. */
+  /**
+   * Project references are opaque strings (path, id or name) and must be
+   * encoded. The scope is what stops one account reaching another's project —
+   * including by passing a raw filesystem path.
+   */
   const rootOf = async (c: Context): Promise<string> =>
-    resolveProjectRoot(decodeURIComponent(param(c, 'ref')));
+    resolveProjectRoot(decodeURIComponent(param(c, 'ref')), scopeFor(c));
 
   app.get(
     '/api/projects/:ref',

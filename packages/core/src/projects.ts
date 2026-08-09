@@ -28,6 +28,20 @@ export interface CreateProjectInput {
   opponent?: string;
   gameDate?: string;
   tags?: string[];
+  /** Account that owns this project on a hosted deployment. */
+  ownerId?: string;
+}
+
+/**
+ * Restricts an operation to one account's projects.
+ *
+ * Omitted entirely means unscoped — that is the CLI, the desktop app, and an
+ * admin service token, all of which legitimately see everything on the machine.
+ * Supplying an ownerId is what makes a multi-user deployment actually isolated,
+ * so every hosted request must pass one.
+ */
+export interface ProjectScope {
+  ownerId: string;
 }
 
 export interface ProjectUpdate {
@@ -91,17 +105,35 @@ export const findProjectRoot = (start: string = process.cwd()): string | null =>
   }
 };
 
-const registerProject = async (manifest: ProjectManifest, root: string): Promise<void> => {
+const registerProject = async (
+  manifest: ProjectManifest,
+  root: string,
+  ownerId?: string,
+): Promise<void> => {
   const db = await globalDb();
   await execute(
     db,
-    `INSERT INTO registered_projects (id, root, name, sport, added_at, last_opened_at)
-     VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO registered_projects (id, root, name, sport, added_at, last_opened_at, owner_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(root) DO UPDATE SET
        id = excluded.id, name = excluded.name, sport = excluded.sport,
-       last_opened_at = excluded.last_opened_at`,
-    [manifest.id, root, manifest.name, manifest.sport, nowIso(), nowIso()],
+       last_opened_at = excluded.last_opened_at,
+       -- Never clear an existing owner: re-registering must not orphan a
+       -- project, and must not silently transfer it either.
+       owner_id = COALESCE(registered_projects.owner_id, excluded.owner_id)`,
+    [manifest.id, root, manifest.name, manifest.sport, nowIso(), nowIso(), ownerId ?? null],
   );
+};
+
+/** The account that owns a registered project, or null when it has none. */
+export const projectOwner = async (root: string): Promise<string | null> => {
+  const db = await globalDb();
+  const row = await get<{ owner_id: string | null }>(
+    db,
+    'SELECT owner_id FROM registered_projects WHERE root = ?',
+    [path.resolve(root)],
+  );
+  return row?.owner_id ?? null;
 };
 
 export const unregisterProject = async (root: string): Promise<void> => {
@@ -171,7 +203,7 @@ export const createProject = async (
     ]);
   }
 
-  await registerProject(manifest, root);
+  await registerProject(manifest, root, input.ownerId);
   return { root, manifest };
 };
 
@@ -180,8 +212,33 @@ export const createProject = async (
  * a registered project id, or a registered project name. With no reference at
  * all, walks up from the current directory.
  */
-export const resolveProjectRoot = async (reference?: string): Promise<string> => {
+export const resolveProjectRoot = async (
+  reference?: string,
+  scope?: ProjectScope,
+): Promise<string> => {
+  const notFound = (): ReelEelError =>
+    new ReelEelError('PROJECT_NOT_FOUND', `No project matched "${reference ?? ''}".`, {
+      hint: 'Run `reeleel project list` to see known projects.',
+    });
+
+  /**
+   * Ownership is enforced here rather than at the call site, because this
+   * function also accepts a raw filesystem path — without this check a signed-in
+   * user could simply pass someone else's project directory. A project owned by
+   * another account reports as not found rather than forbidden, so the response
+   * does not confirm that it exists.
+   */
+  const enforceScope = async (root: string): Promise<string> => {
+    if (scope === undefined) return root;
+    const owner = await projectOwner(root);
+    if (owner !== scope.ownerId) throw notFound();
+    return root;
+  };
+
   if (reference === undefined || reference.length === 0) {
+    // Walking up from cwd is a local convenience and never applies to a
+    // hosted, scoped request.
+    if (scope !== undefined) throw notFound();
     const found = findProjectRoot();
     if (found !== null) return found;
     throw new ReelEelError('PROJECT_NOT_FOUND', 'No project given and none found here.', {
@@ -190,18 +247,22 @@ export const resolveProjectRoot = async (reference?: string): Promise<string> =>
   }
 
   const asPath = path.resolve(reference);
-  if (isProjectRoot(asPath)) return asPath;
+  if (isProjectRoot(asPath)) return enforceScope(asPath);
 
   const db = await globalDb();
+  const clauses = scope === undefined ? '' : 'AND owner_id = ?';
+  const params =
+    scope === undefined ? [reference, reference] : [reference, reference, scope.ownerId];
+
   const match = await get<{ root: string }>(
     db,
     `SELECT root FROM registered_projects
-     WHERE id = ? OR name = ? COLLATE NOCASE
+     WHERE (id = ? OR name = ? COLLATE NOCASE) ${clauses}
      ORDER BY last_opened_at DESC LIMIT 1`,
-    [reference, reference],
+    params,
   );
 
-  if (match !== undefined && isProjectRoot(match.root)) return match.root;
+  if (match !== undefined && isProjectRoot(match.root)) return enforceScope(match.root);
 
   if (match !== undefined) {
     throw new ReelEelError(
@@ -211,9 +272,7 @@ export const resolveProjectRoot = async (reference?: string): Promise<string> =>
     );
   }
 
-  throw new ReelEelError('PROJECT_NOT_FOUND', `No project matched "${reference}".`, {
-    hint: 'Run `reeleel project list` to see known projects.',
-  });
+  throw notFound();
 };
 
 const countRows = async (
@@ -244,8 +303,11 @@ export const summarizeProject = async (root: string): Promise<ProjectSummary> =>
   };
 };
 
-export const listProjects = async (): Promise<ProjectSummary[]> => {
+export const listProjects = async (scope?: ProjectScope): Promise<ProjectSummary[]> => {
   const db = await globalDb();
+  const where = scope === undefined ? '' : 'WHERE owner_id = ?';
+  const params = scope === undefined ? [] : [scope.ownerId];
+
   const rows = await all<{
     id: string;
     root: string;
@@ -256,7 +318,9 @@ export const listProjects = async (): Promise<ProjectSummary[]> => {
     db,
     `SELECT id, root, name, sport, added_at, last_opened_at
      FROM registered_projects
+     ${where}
      ORDER BY COALESCE(last_opened_at, added_at) DESC`,
+    params,
   );
 
   const summaries: ProjectSummary[] = [];
@@ -366,9 +430,12 @@ export const removeProject = async (
 };
 
 /** Adds an existing on-disk project to this machine's registry. */
-export const importProject = async (root: string): Promise<ProjectManifest> => {
+export const importProject = async (
+  root: string,
+  ownerId?: string,
+): Promise<ProjectManifest> => {
   const resolved = path.resolve(root);
   const manifest = readManifest(resolved);
-  await registerProject(manifest, resolved);
+  await registerProject(manifest, resolved, ownerId);
   return manifest;
 };

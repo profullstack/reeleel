@@ -185,40 +185,71 @@ Notes on the image:
 `REELEEL_DB_AUTH_TOKEN` so the machine registry lives in Turso rather than on
 the container disk.
 
-## Authentication
+## Accounts and authentication
 
-The rule is about *exposure*, not about having accounts — the PRD is explicit
-that local desktop use requires no account, and that stays true:
+Local use still requires no account — the PRD says so and that stays true. What
+follows applies to a *hosted* deployment.
 
-| Situation | Behaviour |
+### Accounts
+
+Register at `/register`, confirm the emailed link, sign in at `/login`. Forgot
+your password? `/forgot` sends a single-use reset link.
+
+**Every account only ever sees its own projects.** Ownership is enforced in
+`resolveProjectRoot`, not in the route handlers, because that function also
+accepts a raw filesystem path — checking only in handlers would let a signed-in
+user reach someone else's game by passing its directory. A project belonging to
+another account reports as *not found* rather than *forbidden*, so the response
+does not confirm it exists.
+
+Projects registered by the CLI have no owner and stay invisible to accounts.
+
+| Variable | Effect |
 | --- | --- |
-| `REELEEL_AUTH_TOKEN` unset, bound to loopback | **Open.** You are running it on your own machine. |
-| `REELEEL_AUTH_TOKEN` set | Every route needs it. |
-| `REELEEL_AUTH_TOKEN` unset, bound publicly | **Refuses to start.** |
+| `REELEEL_ALLOW_SIGNUP` | Set false to close registration once your people are in |
+| `REELEEL_REQUIRE_EMAIL_VERIFICATION` | Defaults to on when email is configured, off when it isn't |
 
-That last row is the point. A server that can read, modify and delete project
-directories should fail loudly rather than quietly serve itself to the internet.
+Passwords use scrypt from `node:crypto` — memory-hard, no native dependency —
+with per-user salts and the cost parameters stored alongside each hash so they
+can be raised later. Sessions are server-side rows keyed by a hashed secret, so
+changing a password revokes every other session immediately. Verification and
+reset tokens are stored only as SHA-256 hashes, are single-use, and expire (24h
+and 1h). Login, registration and reset requests are throttled per client.
 
-Generate a token and set it:
+### The service token
 
-```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
-```
-
-Browsers sign in at `/login` and get an HttpOnly, SameSite=Lax session cookie
-signed with HMAC-SHA256 — the token itself is never stored in the cookie. Login
-attempts are throttled. Scripts skip the form:
+`REELEEL_AUTH_TOKEN` is a separate, operator-level credential for scripts. It is
+**not scoped to an account** — it sees everything on the machine.
 
 ```bash
 curl -H "Authorization: Bearer $REELEEL_AUTH_TOKEN" https://your-host/api/projects
 ```
 
-`Authorization: Bearer`, `X-ReelEel-Token` and `?token=` all work. `/api/health`
-stays public so platform healthchecks pass; it discloses nothing but a version
-string.
+`Authorization: Bearer`, `X-ReelEel-Token` and `?token=` all work.
 
-The CLI and desktop app talk to `@reeleel/core` directly and are never affected
-by any of this.
+### Fail-closed
+
+| Situation | Behaviour |
+| --- | --- |
+| No token, bound to loopback | **Open.** You are on your own machine. |
+| Token set | Accounts or the service token. |
+| No token, bound publicly | **Refuses to start.** |
+
+That last row is the point: a server that can delete project directories should
+fail loudly rather than quietly serve itself to the internet.
+
+`/api/health` stays public so platform healthchecks pass; it discloses nothing
+but a version string.
+
+### Email
+
+Verification and reset links are sent through [Resend](https://resend.com). Set
+`RESEND_API_KEY`, `REELEEL_EMAIL_FROM` and `REELEEL_PUBLIC_URL`. **The sending
+domain must be verified in Resend** or every send is rejected.
+
+With no API key, links are written to the server log instead of being sent, and
+email verification is not enforced — a self-hosted install should not need an
+email account to be usable.
 
 ## Privacy and youth safety
 

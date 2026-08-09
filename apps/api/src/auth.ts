@@ -19,9 +19,22 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
  * token should fail loudly, not serve a delete-capable API to the internet.
  */
 
+/** Admin/service token browser session (stateless HMAC). */
 export const SESSION_COOKIE = 'reeleel_session';
+/** Account session (opaque secret; the row lives in the database). */
+export const USER_COOKIE = 'reeleel_user';
 const SESSION_VERSION = 'v1';
 const DEFAULT_SESSION_SECONDS = 60 * 60 * 24 * 7;
+
+/** The signed-in account, when accounts are in use. */
+export interface AuthUser {
+  id: string;
+  email: string;
+  emailVerifiedAt: string | null;
+}
+
+/** Who is making a request: an account, or the shared service token. */
+export type Actor = { kind: 'user'; user: AuthUser } | { kind: 'admin' };
 
 export interface AuthConfig {
   /** Shared secret. `null` means no token configured. */
@@ -147,12 +160,56 @@ export const endSession = (c: Context): void => {
   deleteCookie(c, SESSION_COOKIE, { path: '/' });
 };
 
+const secureCookie = (c: Context): boolean => new URL(c.req.url).protocol === 'https:';
+
+/** Account session cookie. The value is an opaque secret; the row is in the DB. */
+export const setUserCookie = (c: Context, secret: string, maxAgeSeconds: number): void => {
+  setCookie(c, USER_COOKIE, secret, {
+    httpOnly: true,
+    sameSite: 'Lax',
+    path: '/',
+    maxAge: maxAgeSeconds,
+    secure: secureCookie(c),
+  });
+};
+
+export const readUserCookie = (c: Context): string | null => getCookie(c, USER_COOKIE) ?? null;
+
+export const clearUserCookie = (c: Context): void => {
+  deleteCookie(c, USER_COOKIE, { path: '/' });
+};
+
+/**
+ * Rejects cross-site form posts. The session cookies are SameSite=Lax, which
+ * already stops a cross-site POST from carrying them, so this is defence in
+ * depth against a browser that does not enforce that.
+ */
+export const originAllowed = (c: Context): boolean => {
+  const origin = c.req.header('origin');
+  if (origin === undefined) return true; // Non-browser client, or same-origin GET.
+  try {
+    return new URL(origin).host === new URL(c.req.url).host;
+  } catch {
+    return false;
+  }
+};
+
 /**
  * Routes that must stay reachable without credentials.
  * `/api/health` is deliberately public: platform healthchecks are unauthenticated,
  * and it discloses nothing but a version string.
  */
-export const PUBLIC_PATHS = new Set(['/api/health', '/login', '/logout', '/client.js']);
+export const PUBLIC_PATHS = new Set([
+  '/api/health',
+  '/login',
+  '/logout',
+  '/register',
+  '/verify',
+  '/verify/resend',
+  '/forgot',
+  '/reset',
+  '/client.js',
+]);
 
 export const isPublicPath = (path: string): boolean => PUBLIC_PATHS.has(path);
 
@@ -160,20 +217,72 @@ export interface AuthMiddlewareOptions {
   config?: AuthConfig;
   /** Called instead of a JSON 401 — the web app renders a login page. */
   onUnauthorized?: (c: Context) => Response | Promise<Response>;
+  /**
+   * Resolves a signed-in account from the request. Injected rather than
+   * imported so this module stays free of database access and is unit-testable
+   * without one.
+   */
+  resolveUser?: (c: Context) => Promise<AuthUser | null>;
+  /** Block accounts that have not confirmed their address. */
+  requireVerifiedEmail?: boolean;
+  onUnverified?: (c: Context, user: AuthUser) => Response | Promise<Response>;
 }
+
+/** The actor for the current request, set by `requireAuth`. */
+export const getActor = (c: Context): Actor | null =>
+  (c.get('actor') as Actor | undefined) ?? null;
+
+export const currentUser = (c: Context): AuthUser | null => {
+  const actor = getActor(c);
+  return actor !== null && actor.kind === 'user' ? actor.user : null;
+};
 
 export const requireAuth = (options: AuthMiddlewareOptions = {}): MiddlewareHandler => {
   const config = options.config ?? readAuthConfig();
 
   return async (c: Context, next: Next) => {
-    if (!isAuthEnabled(config) || isPublicPath(new URL(c.req.url).pathname)) {
+    const path = new URL(c.req.url).pathname;
+
+    // Accounts are resolved even on public paths and even when the shared token
+    // is absent, so pages can show who is signed in.
+    const user = options.resolveUser === undefined ? null : await options.resolveUser(c);
+    if (user !== null) c.set('actor', { kind: 'user', user } satisfies Actor);
+
+    if (isPublicPath(path)) {
       await next();
       return;
     }
-    if (isAuthenticated(c, config)) {
+
+    if (user !== null) {
+      if (options.requireVerifiedEmail === true && user.emailVerifiedAt === null) {
+        if (options.onUnverified !== undefined) return options.onUnverified(c, user);
+        return c.json(
+          {
+            ok: false,
+            code: 'EMAIL_UNVERIFIED',
+            error: 'Confirm your email address to continue.',
+          },
+          403,
+        );
+      }
       await next();
       return;
     }
+
+    // The shared token is a service credential: it belongs to whoever runs the
+    // deployment, so it is not scoped to any account's projects.
+    if (isAuthEnabled(config) && isAuthenticated(c, config)) {
+      c.set('actor', { kind: 'admin' } satisfies Actor);
+      await next();
+      return;
+    }
+
+    // No token configured and no account: this is a local, single-user install.
+    if (!isAuthEnabled(config) && options.resolveUser === undefined) {
+      await next();
+      return;
+    }
+
     if (options.onUnauthorized !== undefined) return options.onUnauthorized(c);
 
     return c.json(
@@ -181,7 +290,7 @@ export const requireAuth = (options: AuthMiddlewareOptions = {}): MiddlewareHand
         ok: false,
         code: 'UNAUTHORIZED',
         error: 'Authentication required.',
-        hint: 'Send `Authorization: Bearer <REELEEL_AUTH_TOKEN>`, or sign in at /login.',
+        hint: 'Sign in at /login, or send `Authorization: Bearer <REELEEL_AUTH_TOKEN>`.',
       },
       401,
       { 'WWW-Authenticate': 'Bearer realm="ReelEel"' },

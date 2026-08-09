@@ -331,3 +331,83 @@ describe('jobs', () => {
     expect(retried.params['height']).toBe(540);
   });
 });
+
+
+describe('ownership scoping', () => {
+  beforeEach(async () => {
+    const { resetDbCache } = await import('./db.js');
+    resetDbCache();
+  });
+
+  const owned = async (ownerId: string, name: string) => {
+    const { createProject } = await import('./projects.js');
+    return createProject({
+      name,
+      ownerId,
+      path: path.join(home, 'owned', `${ownerId}-${name}-${Math.random()}`),
+    });
+  };
+
+  it('only lists an account its own projects', async () => {
+    const { listProjects } = await import('./projects.js');
+    const mine = await owned('usr_alice', 'Alice Game');
+    await owned('usr_bob', 'Bob Game');
+
+    const alice = await listProjects({ ownerId: 'usr_alice' });
+    expect(alice.map((p) => p.id)).toContain(mine.manifest.id);
+    expect(alice.every((p) => p.name !== 'Bob Game')).toBe(true);
+  });
+
+  it('shows everything when unscoped — the CLI and admin token', async () => {
+    const { listProjects } = await import('./projects.js');
+    await owned('usr_alice', 'Alice Unscoped');
+    await owned('usr_bob', 'Bob Unscoped');
+
+    const names = (await listProjects()).map((p) => p.name);
+    expect(names).toContain('Alice Unscoped');
+    expect(names).toContain('Bob Unscoped');
+  });
+
+  it('resolves an account its own project by id', async () => {
+    const { resolveProjectRoot } = await import('./projects.js');
+    const mine = await owned('usr_alice', 'Alice Resolvable');
+    expect(await resolveProjectRoot(mine.manifest.id, { ownerId: 'usr_alice' })).toBe(mine.root);
+  });
+
+  it('refuses to resolve another account\'s project by id', async () => {
+    const { resolveProjectRoot } = await import('./projects.js');
+    const theirs = await owned('usr_bob', 'Bob Private');
+    await expect(
+      resolveProjectRoot(theirs.manifest.id, { ownerId: 'usr_alice' }),
+    ).rejects.toThrow(/No project matched/);
+  });
+
+  it('refuses a raw filesystem path belonging to another account', async () => {
+    // The path escape hatch is the dangerous one: without an ownership check a
+    // signed-in user could simply pass someone else's directory.
+    const { resolveProjectRoot } = await import('./projects.js');
+    const theirs = await owned('usr_bob', 'Bob Path');
+    await expect(resolveProjectRoot(theirs.root, { ownerId: 'usr_alice' })).rejects.toThrow(
+      /No project matched/,
+    );
+  });
+
+  it('hides unowned projects from an account', async () => {
+    const { createProject, resolveProjectRoot } = await import('./projects.js');
+    const cliProject = await createProject({
+      name: 'CLI Project',
+      path: path.join(home, 'cli-project-' + Math.random()),
+    });
+    await expect(
+      resolveProjectRoot(cliProject.manifest.id, { ownerId: 'usr_alice' }),
+    ).rejects.toThrow(/No project matched/);
+  });
+
+  it('never transfers ownership on re-registration', async () => {
+    const { importProject, projectOwner } = await import('./projects.js');
+    const mine = await owned('usr_alice', 'Alice Keeps');
+
+    await importProject(mine.root, 'usr_bob');
+    expect(await projectOwner(mine.root)).toBe('usr_alice');
+  });
+});

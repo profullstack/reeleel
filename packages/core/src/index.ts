@@ -29,10 +29,16 @@ export * from './types.js';
 export * from './videos.js';
 
 export {
+  all,
+  changes,
   closeDatabases,
+  execute,
+  get,
   globalDb,
+  parseJson,
   projectDb,
   resetDbCache,
+  toNumber,
   withGlobalDb,
   withProjectDb,
 } from './db.js';
