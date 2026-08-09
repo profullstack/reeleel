@@ -235,6 +235,68 @@ export const analyzeProject = async (
             ? video.proxyPath
             : video.path;
 
+        /**
+         * Detection is the long pole — minutes of CPU inference on a full game
+         * — and it used to report progress once, when it started. The bar sat
+         * at 70% for the entire pass, which is indistinguishable from a hang
+         * and was reported as one.
+         *
+         * The worker has always written `analyzed N frames` to its stderr; the
+         * lines were collected into a string and discarded on success. Reading
+         * them turns the dead stretch into a moving bar with an ETA.
+         */
+        const detectionStart = 0.2 + 0.5 * (index / refreshed.length);
+        const detectionSpan = 0.5 / refreshed.length;
+        const fps = video.probe?.video?.fps ?? 0;
+        const durationSeconds = video.probe?.durationSeconds ?? 0;
+        const expectedFrames =
+          fps > 0 && durationSeconds > 0
+            ? Math.max(1, Math.floor((durationSeconds * fps) / settings.frameStride))
+            : 0;
+
+        const startedAt = Date.now();
+        let lastProgressAt = 0;
+        let lastLogAt = 0;
+
+        const onStderr = (chunk: string): void => {
+          // A chunk can carry several lines; only the newest count matters.
+          let frames: number | null = null;
+          for (const match of chunk.matchAll(/analyzed (\d+) frames/g)) {
+            frames = Number(match[1]);
+          }
+          if (frames === null) return;
+
+          const now = Date.now();
+          const elapsed = (now - startedAt) / 1000;
+          const rate = elapsed > 0 ? frames / elapsed : 0;
+
+          // Writing per line would hammer SQLite for no benefit; the feed polls
+          // at a slower cadence than this anyway.
+          if (now - lastProgressAt >= 2000) {
+            lastProgressAt = now;
+            const fraction = expectedFrames > 0 ? Math.min(1, frames / expectedFrames) : 0;
+            const remaining =
+              expectedFrames > 0 && rate > 0 ? Math.max(0, (expectedFrames - frames) / rate) : null;
+            void updateJob(root, job.id, {
+              status: 'running',
+              stage: 'detection',
+              progress: detectionStart + detectionSpan * fraction,
+              etaSeconds: remaining === null ? null : Math.round(remaining),
+            }).catch(() => undefined);
+          }
+
+          // The log is read by a human, so it moves at human speed.
+          if (now - lastLogAt >= 15_000) {
+            lastLogAt = now;
+            const of = expectedFrames > 0 ? ` of ~${expectedFrames}` : '';
+            void logJob(
+              root,
+              job.id,
+              `detection: ${path.basename(input)} — ${frames}${of} frames at ${rate.toFixed(1)}/s`,
+            ).catch(() => undefined);
+          }
+        };
+
         const result = await run(
           worker.command,
           [
@@ -258,7 +320,7 @@ export const analyzeProject = async (
             loadConfig().analysis.backend,
             '--json',
           ],
-          options.signal === undefined ? {} : { signal: options.signal },
+          { onStderr, ...(options.signal === undefined ? {} : { signal: options.signal }) },
         );
 
         if (result.code !== 0) {
