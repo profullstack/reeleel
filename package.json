@@ -1,0 +1,51 @@
+{
+  "name": "reeleel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-first, FOSS youth-sports video intelligence. Import a game, identify your athlete, get a highlight reel.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/profullstack/reeleel.git"
+  },
+  "homepage": "https://github.com/profullstack/reeleel#readme",
+  "bugs": {
+    "url": "https://github.com/profullstack/reeleel/issues"
+  },
+  "keywords": [
+    "video",
+    "sports",
+    "soccer",
+    "highlights",
+    "computer-vision",
+    "local-first",
+    "foss",
+    "ffmpeg"
+  ],
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "packageManager": "pnpm@11.18.0",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --filter @reeleel/cli dev",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "precommit": "pnpm lint && pnpm typecheck && pnpm test:run"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.6",
+    "eslint": "^9.39.0",
+    "prettier": "^3.6.2",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.0",
+    "vitest": "^4.0.17"
+  }
+}
