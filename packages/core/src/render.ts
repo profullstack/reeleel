@@ -220,7 +220,7 @@ export const renderReel = async (
   mkdirSync(exportsDir, { recursive: true });
   const outputPath =
     options.output === undefined
-      ? path.join(exportsDir, `${slugify(reel.name)}_${aspect.replace(':', 'x')}.mp4`)
+      ? nextExportPath(exportsDir, `${slugify(reel.name)}_${aspect.replace(':', 'x')}`)
       : path.resolve(options.output);
 
   // Render each clip to a uniform intermediate so concat is stream-safe.
@@ -293,6 +293,25 @@ export const renderReel = async (
     clipCount: clips.length,
     durationSeconds: clips.reduce((total, clip) => total + (clip.end - clip.start), 0),
   };
+};
+
+/**
+ * The next free `<stem>.mp4`, `<stem>-2.mp4`, `<stem>-3.mp4`…
+ *
+ * Exports used to be written to a path derived from the reel name alone, so
+ * every re-export silently replaced the previous file. A render is minutes of
+ * work and the old one may already have been shared; destroying it to make room
+ * for the new one is not a reasonable default. Keeping both leaves the choice
+ * with the person who made them.
+ */
+export const nextExportPath = (dir: string, stem: string): string => {
+  const first = path.join(dir, `${stem}.mp4`);
+  if (!existsSync(first)) return first;
+  for (let n = 2; n < 10_000; n += 1) {
+    const candidate = path.join(dir, `${stem}-${n}.mp4`);
+    if (!existsSync(candidate)) return candidate;
+  }
+  return path.join(dir, `${stem}-${Date.now()}.mp4`);
 };
 
 export interface ExportRecord {

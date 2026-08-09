@@ -1,5 +1,7 @@
-import { existsSync } from 'node:fs';
+import { createReadStream, existsSync, statSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
+import path from 'node:path';
+import { Readable } from 'node:stream';
 
 import type { Context, Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
@@ -14,11 +16,14 @@ import {
   createProject,
   createReel,
   isReelEelError,
+  listExports,
   listJobLogsSince,
   listJobs,
   listRecentJobLogs,
   loadConfig,
+  projectDir,
   removeAthlete,
+  removeExport,
   removeProject,
   removeVideo,
   renderReel,
@@ -379,6 +384,59 @@ export const registerActions = (app: Hono): void => {
   });
 
   /**
+   * Downloads a rendered reel.
+   *
+   * Exports were written to the server's disk and never surfaced anywhere, so
+   * "the file appears under exports when done" meant a path the user had no way
+   * to reach. The record's own stored path is used, but only after checking it
+   * still sits inside this project — the row is the authority on which export
+   * this is, not on where the process may read from.
+   */
+  app.get('/projects/:ref/exports/:id/download', async (c) => {
+    const ref = c.req.param('ref') ?? '';
+    const to = `/projects/${encodeURIComponent(ref)}`;
+    try {
+      const root = await rootOf(c);
+      const record = (await listExports(root)).find((entry) => entry.id === c.req.param('id'));
+      if (record === undefined) return back(c, to, undefined, 'No such export.');
+
+      const resolved = path.resolve(record.path);
+      const within = path.resolve(projectDir(root, 'exports'));
+      if (!resolved.startsWith(`${within}${path.sep}`)) {
+        return back(c, to, undefined, 'That export is not inside this project.');
+      }
+      if (!existsSync(resolved)) {
+        return back(c, to, undefined, 'That export is no longer on disk.');
+      }
+
+      const name = path.basename(resolved);
+      c.header('content-type', 'video/mp4');
+      c.header('content-length', String(statSync(resolved).size));
+      c.header('content-disposition', `attachment; filename="${name}"`);
+      // Streamed, for the same reason uploads are: a reel is not a thing to
+      // hold in memory.
+      return c.body(Readable.toWeb(createReadStream(resolved)) as ReadableStream);
+    } catch (error) {
+      return back(c, to, undefined, failed(error));
+    }
+  });
+
+  /** Removes one export. Older versions are kept, so this has to be possible. */
+  app.post('/projects/:ref/exports/:id/delete', async (c) => {
+    const bad = await guard(c);
+    if (bad !== null) return bad;
+    const ref = c.req.param('ref') ?? '';
+    const to = `/projects/${encodeURIComponent(ref)}`;
+    try {
+      const root = await rootOf(c);
+      await removeExport(root, c.req.param('id') ?? '');
+      return back(c, to, 'Export deleted');
+    } catch (error) {
+      return back(c, to, undefined, failed(error));
+    }
+  });
+
+  /**
    * A live feed of job state and job logs, over Server-Sent Events.
    *
    * Analysis takes minutes and the page used to say "Refresh for progress",
@@ -705,14 +763,21 @@ export const registerActions = (app: Hono): void => {
       const root = await rootOf(c);
       const body = await c.req.parseBody();
       const preset = (field(body, 'preset') || loadConfig().analysis.preset) as Preset;
+      // "all" is the explicit opt-in; anything else names one video. Analysing
+      // everything by default meant one unreadable file took the whole run with
+      // it, and re-analysed footage that had already been done.
+      const chosen = field(body, 'videoId');
+      const videoId = chosen.length === 0 || chosen === 'all' ? undefined : chosen;
 
       // Analysis takes minutes; holding the request open would time out at the
       // proxy. It records a job, so the page can report progress instead.
-      void analyzeProject(root, { preset }).catch((error: unknown) => {
-        process.stderr.write(`analysis failed: ${failed(error)}\n`);
-      });
+      void analyzeProject(root, { preset, ...(videoId === undefined ? {} : { videoId }) }).catch(
+        (error: unknown) => {
+          process.stderr.write(`analysis failed: ${failed(error)}\n`);
+        },
+      );
 
-      return back(c, to, 'Analysis started — watch the jobs list');
+      return back(c, to, 'Analysis started — watch the live log');
     } catch (error) {
       return back(c, to, undefined, failed(error));
     }

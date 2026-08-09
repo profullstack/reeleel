@@ -47,13 +47,14 @@ import type { AuthUser } from '@reeleel/api';
 import {
   isReelEelError,
   listAthletes,
-  newId,
   listClips,
+  listExports,
   listJobs,
   listMoments,
   listProjects,
   listSports,
   listVideos,
+  newId,
   resolveProjectRoot,
   runChecks,
   summarizeProject,
@@ -418,13 +419,14 @@ export const createWebApp = (): Hono => {
       if (ref === undefined) return c.html(<ErrorPage message="No project given." />, 400);
 
       const root = await resolveProjectRoot(decodeURIComponent(ref), scopeFor(c));
-      const [project, videos, athletes, moments, clips, jobs] = await Promise.all([
+      const [project, videos, athletes, moments, clips, jobs, exports] = await Promise.all([
         summarizeProject(root),
         listVideos(root),
         listAthletes(root),
         listMoments(root),
         listClips(root),
         listJobs(root, { limit: 10 }),
+        listExports(root),
       ]);
       return c.html(
         <ProjectPage
@@ -434,6 +436,7 @@ export const createWebApp = (): Hono => {
           moments={moments}
           clips={clips}
           jobs={jobs}
+          exports={exports}
           flash={flashOf(c)}
         />,
       );
