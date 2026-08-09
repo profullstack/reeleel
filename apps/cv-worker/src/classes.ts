@@ -87,19 +87,30 @@ export const COCO_CLASSES = [
 ] as const;
 
 /**
- * What a general COCO detector can honestly contribute to soccer.
+ * What a general COCO detector can honestly contribute to each sport.
  *
- * `referee`, `goalkeeper` and `goal` are NOT here, and that is the point: COCO
- * has no such classes, and every person on a pitch looks like `person` to it.
- * Guessing roles from a person box would be inventing data. Those classes wait
- * for a sport-specific model; until then the moment scorer simply gets no
- * signal from the rules that need them, which it already handles.
+ * Roles — referee, goalkeeper, umpire — are deliberately absent everywhere.
+ * COCO has no such classes and every person on a field looks like `person` to
+ * it; guessing a role from a person box would be inventing data. So are the
+ * targets (goal, hoop, net, base) and anything sport-specific COCO never saw,
+ * like a hockey puck or a lacrosse stick.
+ *
+ * Those wait for sport-specific models. Until then the moment scorer simply
+ * gets no signal from the rules that need them, which it already handles.
  */
+const BALL_SPORT: Record<number, string> = { 0: 'player', 32: 'ball' };
+
 export const COCO_TO_SPORT: Record<string, Record<number, string>> = {
-  soccer: {
-    0: 'player',
-    32: 'ball',
-  },
+  soccer: BALL_SPORT,
+  basketball: BALL_SPORT,
+  lacrosse: BALL_SPORT,
+  football: BALL_SPORT,
+  volleyball: BALL_SPORT,
+  // COCO does know a bat and a glove, which is unusually generous of it.
+  baseball: { 0: 'player', 32: 'ball', 34: 'bat', 35: 'glove' },
+  softball: { 0: 'player', 32: 'ball', 34: 'bat', 35: 'glove' },
+  // No puck in COCO, so hockey gets players and nothing else.
+  hockey: { 0: 'player' },
 };
 
 export interface ClassMapping {

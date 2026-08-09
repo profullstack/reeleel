@@ -17,6 +17,7 @@
     "@react-native-async-storage/async-storage": "^2.1.0",
     "@reeleel/client": "file:../../packages/client",
     "expo": "~52.0.0",
+    "expo-asset": "~11.0.5",
     "expo-status-bar": "~2.0.0",
     "react": "18.3.1",
     "react-native": "0.76.5"

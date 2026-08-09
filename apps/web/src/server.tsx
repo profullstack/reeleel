@@ -51,6 +51,7 @@ import {
   listJobs,
   listMoments,
   listProjects,
+  listSports,
   listVideos,
   resolveProjectRoot,
   runChecks,
@@ -393,7 +394,13 @@ export const createWebApp = (): Hono => {
 
   app.get('/', async (c) => {
     try {
-      return c.html(<ProjectsPage projects={await listProjects(scopeFor(c))} flash={flashOf(c)} />);
+      return c.html(
+        <ProjectsPage
+          projects={await listProjects(scopeFor(c))}
+          sports={listSports().map((sport) => ({ id: sport.id, name: sport.name }))}
+          flash={flashOf(c)}
+        />,
+      );
     } catch (error) {
       return c.html(<ErrorPage message={String(error)} />, 500);
     }

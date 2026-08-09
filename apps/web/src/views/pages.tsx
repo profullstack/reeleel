@@ -35,10 +35,11 @@ export const Notice: FC<{ flash: Flash }> = ({ flash }) => (
   </>
 );
 
-export const ProjectsPage: FC<{ projects: ProjectSummary[]; flash: Flash }> = ({
-  projects,
-  flash,
-}) => (
+export const ProjectsPage: FC<{
+  projects: ProjectSummary[];
+  sports: { id: string; name: string }[];
+  flash: Flash;
+}> = ({ projects, sports, flash }) => (
   <Layout title="Projects">
     <h1>Projects</h1>
     <Notice flash={flash} />
@@ -58,7 +59,22 @@ export const ProjectsPage: FC<{ projects: ProjectSummary[]; flash: Flash }> = ({
           <label for="gameDate">Game date</label>
           <input id="gameDate" name="gameDate" type="text" placeholder="2026-05-01" />
         </div>
-        <input type="hidden" name="sport" value="soccer" />
+        <div class="field">
+          <label for="sport">Sport</label>
+          {/* Populated from the plugin registry, so a new sport plugin shows up
+              here without touching this template. */}
+          <select
+            id="sport"
+            name="sport"
+            style="font:inherit;padding:.45rem .6rem;border-radius:.4rem;border:1px solid var(--line);background:var(--bg);color:inherit;width:100%"
+          >
+            {sports.map((sport) => (
+              <option key={sport.id} value={sport.id} selected={sport.id === 'soccer'}>
+                {sport.name}
+              </option>
+            ))}
+          </select>
+        </div>
         <button type="submit">Create project</button>
       </form>
     </details>

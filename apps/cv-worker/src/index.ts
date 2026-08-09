@@ -53,9 +53,14 @@ const capabilities = (): void => {
       license: DEFAULT_MODEL.license,
       url: DEFAULT_MODEL.url,
     },
-    // Stated plainly so nobody expects roles this model cannot know.
-    producesClasses: Object.values(COCO_TO_SPORT['soccer'] ?? {}),
-    cannotProduce: ['referee', 'goalkeeper', 'goal'],
+    // Stated plainly so nobody expects roles or targets this model cannot know.
+    producesBySport: Object.fromEntries(
+      Object.entries(COCO_TO_SPORT).map(([sport, table]) => [
+        sport,
+        [...new Set(Object.values(table))],
+      ]),
+    ),
+    cannotProduce: ['any role (referee, goalkeeper, umpire)', 'any target (goal, hoop, net, base)'],
   });
 };
 
