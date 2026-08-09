@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
 
 import type { Context, Hono } from 'hono';
+import { streamSSE } from 'hono/streaming';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 
 import { originAllowed, ownerFor, scopeFor } from '@reeleel/api';
@@ -13,6 +14,9 @@ import {
   createProject,
   createReel,
   isReelEelError,
+  listJobLogsSince,
+  listJobs,
+  listRecentJobLogs,
   loadConfig,
   removeAthlete,
   removeProject,
@@ -372,6 +376,81 @@ export const registerActions = (app: Hono): void => {
       return c.json({ ok: false, code: 'NOT_FOUND', error: 'No such upload.' }, 404);
     }
     return c.json({ ok: true, upload: view(record) });
+  });
+
+  /**
+   * A live feed of job state and job logs, over Server-Sent Events.
+   *
+   * Analysis takes minutes and the page used to say "Refresh for progress",
+   * which is the same class of non-answer as a progress bar that stops: the
+   * work is happening, the stages and their failures are already recorded, and
+   * none of it reaches the person waiting.
+   *
+   * The source of truth is the project database, so this polls it and pushes
+   * on change rather than subscribing to an in-process emitter. That is
+   * deliberate — a job started by the CLI, in a different process entirely,
+   * shows up here exactly the same way.
+   */
+  app.get('/projects/:ref/jobs/stream', async (c) => {
+    const root = await rootOf(c);
+
+    // Resume where a dropped connection left off. EventSource replays its last
+    // id automatically, so a reconnect does not repeat or skip lines.
+    const resumeFrom = Number(c.req.header('last-event-id') ?? c.req.query('since') ?? Number.NaN);
+
+    c.header('cache-control', 'no-cache, no-transform');
+    // Without this, a buffering proxy holds the stream and "realtime" becomes
+    // "all at once, at the end".
+    c.header('x-accel-buffering', 'no');
+
+    return streamSSE(c, async (stream) => {
+      let cursor = Number.isFinite(resumeFrom) ? resumeFrom : -1;
+      let previous = '';
+      let idle = 0;
+
+      if (cursor < 0) {
+        // A fresh feed opens with recent history, so the log is not blank
+        // while waiting for the next thing to happen.
+        const recent = await listRecentJobLogs(root, 100);
+        cursor = recent.at(-1)?.id ?? 0;
+        if (recent.length > 0) {
+          await stream.writeSSE({ event: 'log', data: JSON.stringify(recent), id: String(cursor) });
+        }
+      }
+
+      // Half a minute of silence with nothing running is enough; the client
+      // reconnects on its own, and an idle stream should not pin a connection.
+      const MAX_IDLE_TICKS = 50;
+      const TICK_MS = 600;
+
+      while (!stream.closed && !stream.aborted) {
+        const jobs = await listJobs(root, { limit: 10 });
+        const serialized = JSON.stringify(jobs);
+        if (serialized !== previous) {
+          previous = serialized;
+          idle = 0;
+          await stream.writeSSE({ event: 'jobs', data: serialized });
+        }
+
+        const lines = await listJobLogsSince(root, cursor, 500);
+        if (lines.length > 0) {
+          cursor = lines[lines.length - 1]?.id ?? cursor;
+          idle = 0;
+          await stream.writeSSE({ event: 'log', data: JSON.stringify(lines), id: String(cursor) });
+        }
+
+        const busy = jobs.some((job) => job.status === 'running' || job.status === 'queued');
+        idle = busy ? 0 : idle + 1;
+        if (idle > MAX_IDLE_TICKS) {
+          // A comment frame, so the client sees a clean close rather than a
+          // dead socket, and reconnects when it wants to.
+          await stream.writeSSE({ event: 'idle', data: '{}' });
+          return;
+        }
+
+        await stream.sleep(TICK_MS);
+      }
+    });
   });
 
   // ── Uploads: resumable, chunked, and fully CRUD-able ──────────────────────

@@ -326,9 +326,23 @@ export const analyzeProject = async (
     return { job: finished, stagesRun, tracksCreated, momentsGenerated, warnings };
   } catch (error) {
     const canceled = error instanceof ReelEelError && error.code === 'JOB_CANCELED';
+    const message = error instanceof Error ? error.message : String(error);
+    const hint = error instanceof ReelEelError ? error.hint : undefined;
+    const code = error instanceof ReelEelError ? `${error.code}: ` : '';
+
+    // The reason goes in the log as well as the job row. A row that only says
+    // "failed" leaves the user staring at a status with no way to find out
+    // what happened — the same dead end as an upload that simply stops.
+    await logJob(
+      root,
+      job.id,
+      canceled ? 'Canceled.' : `${code}${message}${hint === undefined ? '' : ` — ${hint}`}`,
+      canceled ? 'warn' : 'error',
+    ).catch(() => undefined);
+
     await updateJob(root, job.id, {
       status: canceled ? 'canceled' : 'failed',
-      error: error instanceof Error ? error.message : String(error),
+      error: message,
     });
     throw error;
   }

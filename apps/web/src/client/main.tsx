@@ -1,6 +1,7 @@
 /** @jsxImportSource hono/jsx/dom */
 import { render, useState } from 'hono/jsx/dom';
 
+import { mountJobLog } from './jobs.js';
 import { mountUploads } from './upload.js';
 
 /**
@@ -103,6 +104,7 @@ const MomentReview = ({ projectId, initial }: { projectId: string; initial: Mome
 const mount = (): void => {
   // Independent of the review island, and present on pages that have no moments.
   mountUploads();
+  mountJobLog();
 
   const node = document.getElementById('moment-review');
   if (node === null) return;

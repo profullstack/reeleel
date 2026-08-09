@@ -299,37 +299,44 @@ export const ProjectPage: FC<ProjectView> = ({
         {videos.length === 0 ? <p class="muted">Import footage first.</p> : null}
       </form>
 
-      {jobs.length === 0 ? null : (
-        <table>
-          <thead>
-            <tr>
-              <th>Job</th>
-              <th>Status</th>
-              <th>Stage</th>
-              <th>Progress</th>
-            </tr>
-          </thead>
-          <tbody>
-            {jobs.slice(0, 5).map((job) => (
-              <tr key={job.id}>
-                <td>{job.kind}</td>
-                <td>
-                  <span class={`pill ${job.status === 'completed' ? 'keep' : job.status === 'failed' ? 'reject' : ''}`}>
-                    {job.status}
-                  </span>
-                </td>
-                <td class="muted">{job.stage ?? '—'}</td>
-                <td>{Math.round(job.progress * 100)}%</td>
+      {/* Replaced by the live SSE log on mount. What is rendered here is the
+          no-JavaScript view: the same jobs, including — unlike before — the
+          reason a failed one failed. */}
+      <div id="job-log" data-base={base}>
+        {jobs.length === 0 ? null : (
+          <table>
+            <thead>
+              <tr>
+                <th>Job</th>
+                <th>Status</th>
+                <th>Stage</th>
+                <th>Progress</th>
+                <th>Detail</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-      {jobs.some((job) => job.status === 'running' || job.status === 'queued') ? (
-        <p class="muted">
-          Analysis is running. <a href={base}>Refresh</a> for progress.
-        </p>
-      ) : null}
+            </thead>
+            <tbody>
+              {jobs.slice(0, 5).map((job) => (
+                <tr key={job.id}>
+                  <td>{job.kind}</td>
+                  <td>
+                    <span class={`pill ${job.status === 'completed' ? 'keep' : job.status === 'failed' ? 'reject' : ''}`}>
+                      {job.status}
+                    </span>
+                  </td>
+                  <td class="muted">{job.stage ?? '—'}</td>
+                  <td>{Math.round(job.progress * 100)}%</td>
+                  <td class="muted">{job.error ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {jobs.some((job) => job.status === 'running' || job.status === 'queued') ? (
+          <p class="muted">
+            Analysis is running. <a href={base}>Refresh</a> for progress.
+          </p>
+        ) : null}
+      </div>
 
       <h2>Suggested moments</h2>
       {moments.length === 0 ? (
