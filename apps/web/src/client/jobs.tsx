@@ -68,6 +68,9 @@ const JobLog = ({ base }: { base: string }) => {
   const [lines, setLines] = useState<LogLine[]>([]);
   const [connection, setConnection] = useState<Connection>('connecting');
   const pane = useRef<HTMLDivElement | null>(null);
+  /** Forces a repaint once a second so elapsed time and ETA actually advance. */
+  const [, tick] = useState(0);
+  const lastEventAt = useRef(Date.now());
   /** Only pin to the bottom while the user is already there. */
   const pinned = useRef(true);
   const reloadWhenDone = useRef(false);
@@ -81,9 +84,19 @@ const JobLog = ({ base }: { base: string }) => {
       if (stopped) return;
       source = new EventSource(`${base}/jobs/stream`);
 
-      source.addEventListener('open', () => setConnection('live'));
+      source.addEventListener('open', () => {
+        lastEventAt.current = Date.now();
+        setConnection('live');
+      });
+
+      // Heartbeat: proof the feed is alive when there is nothing to report.
+      source.addEventListener('ping', () => {
+        lastEventAt.current = Date.now();
+        setConnection('live');
+      });
 
       source.addEventListener('jobs', (event) => {
+        lastEventAt.current = Date.now();
         const next = JSON.parse((event as MessageEvent<string>).data) as Job[];
         setJobs(next);
         if (next.some((job) => job.status === 'running' || job.status === 'queued')) {
@@ -96,6 +109,7 @@ const JobLog = ({ base }: { base: string }) => {
       });
 
       source.addEventListener('log', (event) => {
+        lastEventAt.current = Date.now();
         const batch = JSON.parse((event as MessageEvent<string>).data) as LogLine[];
         setLines((current) => {
           const seen = new Set(current.map((line) => line.id));
@@ -127,6 +141,18 @@ const JobLog = ({ base }: { base: string }) => {
     };
   }, [base]);
 
+  /**
+   * The card is driven by events, and events only arrive when something
+   * changes. A long detection pass can change nothing for a while, so without
+   * this the elapsed time freezes at whatever it was when the last event landed
+   * — which is precisely what "1s" next to a job running for half a minute
+   * meant. The clock belongs to the client; only the data belongs to the feed.
+   */
+  useEffect(() => {
+    const id = window.setInterval(() => tick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
   useEffect(() => {
     if (pinned.current && pane.current !== null) {
       pane.current.scrollTop = pane.current.scrollHeight;
@@ -139,6 +165,9 @@ const JobLog = ({ base }: { base: string }) => {
     pinned.current = node.scrollHeight - node.scrollTop - node.clientHeight < 40;
   };
 
+  // Shown while a job is running: a bar that has not moved is fine, a feed that
+  // has not spoken is not, and the two must not look the same.
+  const staleness = Math.floor((Date.now() - lastEventAt.current) / 1000);
   const running = jobs.filter((job) => job.status === 'running' || job.status === 'queued');
   const recent = jobs.slice(0, 5);
 
@@ -152,7 +181,7 @@ const JobLog = ({ base }: { base: string }) => {
         <span class={`pill live-${connection}`}>
           {connection === 'live'
             ? running.length > 0
-              ? 'live'
+              ? `live · updated ${staleness}s ago`
               : 'connected'
             : connection === 'idle'
               ? 'idle'

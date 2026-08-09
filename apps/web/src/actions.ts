@@ -21,6 +21,7 @@ import {
   listJobs,
   listRecentJobLogs,
   loadConfig,
+  nowIso,
   projectDir,
   removeAthlete,
   removeExport,
@@ -465,6 +466,7 @@ export const registerActions = (app: Hono): void => {
       let cursor = Number.isFinite(resumeFrom) ? resumeFrom : -1;
       let previous = '';
       let idle = 0;
+      let sinceKeepalive = 0;
 
       if (cursor < 0) {
         // A fresh feed opens with recent history, so the log is not blank
@@ -480,13 +482,18 @@ export const registerActions = (app: Hono): void => {
       // reconnects on its own, and an idle stream should not pin a connection.
       const MAX_IDLE_TICKS = 50;
       const TICK_MS = 600;
+      // ~9s between heartbeats: often enough to look alive, rare enough to be
+      // free.
+      const KEEPALIVE_TICKS = 15;
 
       while (!stream.closed && !stream.aborted) {
         const jobs = await listJobs(root, { limit: 10 });
         const serialized = JSON.stringify(jobs);
+        let sent = false;
         if (serialized !== previous) {
           previous = serialized;
           idle = 0;
+          sent = true;
           await stream.writeSSE({ event: 'jobs', data: serialized });
         }
 
@@ -494,7 +501,20 @@ export const registerActions = (app: Hono): void => {
         if (lines.length > 0) {
           cursor = lines[lines.length - 1]?.id ?? cursor;
           idle = 0;
+          sent = true;
           await stream.writeSSE({ event: 'log', data: JSON.stringify(lines), id: String(cursor) });
+        }
+
+        /**
+         * A heartbeat, because "nothing has changed" and "this feed is dead"
+         * look identical to a client otherwise — and a long detection pass can
+         * genuinely produce no change for a while. It also keeps intermediate
+         * proxies from closing a connection they think has gone idle.
+         */
+        sinceKeepalive = sent ? 0 : sinceKeepalive + 1;
+        if (sinceKeepalive >= KEEPALIVE_TICKS) {
+          sinceKeepalive = 0;
+          await stream.writeSSE({ event: 'ping', data: JSON.stringify({ at: nowIso() }) });
         }
 
         const busy = jobs.some((job) => job.status === 'running' || job.status === 'queued');
