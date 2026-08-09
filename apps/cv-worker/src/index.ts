@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { realpathSync } from 'node:fs';
+import { availableParallelism, cpus } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 import { probe } from '@reeleel/core';
@@ -33,6 +34,23 @@ const number = (value: string | undefined, fallback: number): number => {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
+
+/**
+ * How many threads onnxruntime should use for one inference.
+ *
+ * Left to itself (`intraOpNumThreads: 0`) onnxruntime sizes its pool from the
+ * cores it can see — and inside a container that is usually the *host's* core
+ * count, not the cgroup's share of it. Oversubscribing is not a mild loss:
+ * measured on a 4-core machine, YOLOX-Tiny at 416x416 runs 56 ms/frame with a
+ * sensible pool and 194 ms/frame with eight threads, so a container given two
+ * vCPUs on a large host can end up several times slower than the hardware
+ * allows, invisibly.
+ *
+ * `os.availableParallelism()` is cgroup-aware, which `os.cpus().length` is not.
+ * Two threads measured fastest and four were close; more than four only ever
+ * cost time, so the pool is capped there.
+ */
+const defaultThreads = (): number => Math.max(1, Math.min(4, availableParallelism()));
 
 /** Data on stdout, diagnostics on stderr — the host parses stdout as one object. */
 const emit = (payload: unknown): void => {
@@ -92,6 +110,16 @@ const detectAndTrack = async (flags: Record<string, string>): Promise<void> => {
     return;
   }
 
+  const threads = number(flags['threads'], defaultThreads());
+  // Reported before the run, not after: a detection pass takes minutes and can
+  // fail, and a diagnostic that only prints on success is no use in either
+  // case. If the two counts disagree, onnxruntime left to itself would have
+  // sized its pool from the wrong one — the reason threads are pinned at all.
+  process.stderr.write(
+    `threads: using ${threads} ` +
+      `(cgroup-aware ${availableParallelism()}, visible cores ${cpus().length})\n`,
+  );
+
   const media = await probe(input);
   const width = media.video?.width ?? 0;
   const height = media.video?.height ?? 0;
@@ -119,12 +147,13 @@ const detectAndTrack = async (flags: Record<string, string>): Promise<void> => {
       sourceWidth: width,
       sourceHeight: height,
       fps: media.video?.fps ?? 0,
-      threads: number(flags['threads'], 0),
+      threads,
       signal: controller.signal,
       onProgress: (frames) => {
         if (frames % 50 === 0) process.stderr.write(`analyzed ${frames} frames\n`);
       },
     });
+
 
     process.stderr.write(
       `done: ${result.framesProcessed} frames, ${result.detections} detections, ` +
