@@ -1,6 +1,8 @@
 /** @jsxImportSource hono/jsx/dom */
 import { render, useState } from 'hono/jsx/dom';
 
+import { mountUploads } from './upload.js';
+
 /**
  * The SPA half of the app: one island that takes over the server-rendered
  * moment list and makes accept/reject interactive. Everything else stays plain
@@ -99,6 +101,9 @@ const MomentReview = ({ projectId, initial }: { projectId: string; initial: Mome
 };
 
 const mount = (): void => {
+  // Independent of the review island, and present on pages that have no moments.
+  mountUploads();
+
   const node = document.getElementById('moment-review');
   if (node === null) return;
 

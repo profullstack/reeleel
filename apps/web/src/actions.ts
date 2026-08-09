@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
-import path from 'node:path';
+import { existsSync } from 'node:fs';
+import { unlink } from 'node:fs/promises';
 
 import type { Context, Hono } from 'hono';
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
 
 import { originAllowed, ownerFor, scopeFor } from '@reeleel/api';
 import {
@@ -14,7 +14,6 @@ import {
   createReel,
   isReelEelError,
   loadConfig,
-  projectDir,
   removeAthlete,
   removeProject,
   removeVideo,
@@ -25,6 +24,30 @@ import {
   updateProject,
 } from '@reeleel/core';
 import type { AspectRatio, Preset } from '@reeleel/core';
+
+import {
+  appendChunk,
+  cancelSession,
+  createSession,
+  demoteSession,
+  discardSession,
+  findSession,
+  promoteSession,
+  renameSession,
+} from './chunked.js';
+import { boundaryOf } from './multipart.js';
+import { UploadError, receiveVideoUpload } from './receive.js';
+import {
+  beginUpload,
+  failUpload,
+  finishUpload,
+  forgetUpload,
+  getUploadFor,
+  importingUpload,
+  listUploads,
+  reopenUpload,
+} from './uploads.js';
+import type { UploadRecord } from './uploads.js';
 
 /**
  * Every mutation the UI can perform.
@@ -56,8 +79,125 @@ const back = (c: Context, to: string, message?: string, error?: string): Respons
 const failed = (error: unknown): string =>
   isReelEelError(error) ? `${error.message}${error.hint === undefined ? '' : ` ${error.hint}`}` : String(error);
 
-/** Filenames arrive from a browser and must never escape the project. */
-const safeFileName = (name: string): string => path.basename(name).replace(/[^A-Za-z0-9._-]/g, '_');
+/**
+ * A failure reduced to the parts every surface needs: a stable code to key off,
+ * a sentence to show, a hint, and a status. Silence is not one of the options.
+ */
+interface Described {
+  code: string;
+  error: string;
+  hint: string | undefined;
+  status: ContentfulStatusCode;
+}
+
+const describe = (error: unknown): Described => {
+  if (error instanceof UploadError) {
+    return {
+      code: error.code,
+      error: error.message,
+      hint: error.hint,
+      status: error.status as ContentfulStatusCode,
+    };
+  }
+  if (isReelEelError(error)) {
+    return { code: error.code, error: error.message, hint: error.hint, status: 400 };
+  }
+  return {
+    code: 'UNKNOWN',
+    error: error instanceof Error ? error.message : String(error),
+    hint: undefined,
+    status: 500,
+  };
+};
+
+/**
+ * The client's view of an upload. Server paths stay on the server; `offset` is
+ * named for what the client does with it — the byte to resume from.
+ */
+const view = (record: UploadRecord): Record<string, unknown> => ({
+  id: record.id,
+  projectRef: record.projectRef,
+  fileName: record.fileName,
+  status: record.status,
+  offset: record.bytesReceived,
+  bytesReceived: record.bytesReceived,
+  bytesExpected: record.bytesExpected,
+  percent:
+    record.bytesExpected === null || record.bytesExpected === 0
+      ? null
+      : Math.min(1, record.bytesReceived / record.bytesExpected),
+  code: record.code,
+  error: record.error,
+  hint: record.hint,
+  videoId: record.videoId,
+  startedAt: record.startedAt,
+  updatedAt: record.updatedAt,
+  finishedAt: record.finishedAt,
+});
+
+/** A JSON error for the upload API, recording the failure when given a record. */
+const uploadJson = (c: Context, error: unknown, record?: UploadRecord | null): Response => {
+  const described = describe(error);
+  if (record !== undefined && record !== null) {
+    failUpload(record, { ...described, cause: error });
+  } else if (described.status >= 500) {
+    process.stderr.write(`[upload -] ${described.code}: ${described.error}\n`);
+  }
+  return c.json(
+    {
+      ok: false,
+      code: described.code,
+      error: described.error,
+      hint: described.hint,
+      ...(record === undefined || record === null ? {} : { upload: view(record) }),
+    },
+    described.status,
+  );
+};
+
+/**
+ * The enhanced uploader asks for JSON so it can show a real error; the plain
+ * form gets the redirect it has always got. Both carry the same upload id.
+ */
+const prefersJson = (c: Context): boolean =>
+  (c.req.header('accept') ?? '').includes('application/json');
+
+const uploadOk = (
+  c: Context,
+  to: string,
+  message: string,
+  record: UploadRecord | null,
+): Response => {
+  if (record !== null) c.header('x-upload-id', record.id);
+  return prefersJson(c)
+    ? c.json({ ok: true, message, uploadId: record?.id ?? null })
+    : back(c, to, message);
+};
+
+const uploadFailed = (
+  c: Context,
+  to: string,
+  record: UploadRecord | null,
+  error: unknown,
+): Response => {
+  const described = describe(error);
+  if (record !== null) {
+    c.header('x-upload-id', record.id);
+    failUpload(record, { ...described, hint: described.hint, cause: error });
+  } else {
+    process.stderr.write(`[upload -] failed ${described.code}: ${described.error}\n`);
+  }
+  if (prefersJson(c)) {
+    return c.json(
+      { ok: false, code: described.code, error: described.error, hint: described.hint, uploadId: record?.id ?? null },
+      described.status,
+    );
+  }
+  // The id goes in the flash so a user can quote it and an operator can grep it.
+  const suffix = record === null ? '' : ` (upload ${record.id})`;
+  const hint = described.hint === undefined ? '' : ` ${described.hint}`;
+  return back(c, to, undefined, `${described.error}${hint}${suffix}`);
+};
 
 export const registerActions = (app: Hono): void => {
   const guard = async (c: Context): Promise<Response | null> =>
@@ -133,37 +273,260 @@ export const registerActions = (app: Hono): void => {
 
   // ── Videos ────────────────────────────────────────────────────────────────
 
+  /**
+   * Import footage — by upload, or by a path already on the server.
+   *
+   * The upload is streamed to disk rather than parsed into memory: see
+   * receive.ts for why that distinction is the whole bug this route used to
+   * have. Every attempt is tracked from before its first byte, so a failure at
+   * any point has an id, a code and a log line instead of a dead progress bar.
+   */
   app.post('/projects/:ref/videos', async (c) => {
     const bad = await guard(c);
     if (bad !== null) return bad;
     const ref = c.req.param('ref') ?? '';
     const to = `/projects/${encodeURIComponent(ref)}`;
 
+    let record: UploadRecord | null = null;
     try {
       const root = await rootOf(c);
-      const body = await c.req.parseBody();
 
-      const upload = body['file'];
-      if (upload instanceof File && upload.size > 0) {
-        // Uploaded footage has nowhere else to live, so it is written into the
-        // project's own source/ directory and referenced from there.
-        const dir = projectDir(root, 'source');
-        mkdirSync(dir, { recursive: true });
-        const target = path.join(dir, safeFileName(upload.name));
-        if (existsSync(target)) return back(c, to, undefined, 'A file with that name is already imported.');
-
-        await writeFile(target, Buffer.from(await upload.arrayBuffer()));
-        await addVideo(root, target);
-        return back(c, to, 'Footage imported');
+      // A plain (non-multipart) post can only be the server-path form; it has
+      // no body worth streaming, so the simple path stays simple.
+      if (boundaryOf(c.req.header('content-type')) === null) {
+        const body = await c.req.parseBody();
+        const filePath = field(body, 'path');
+        if (filePath.length === 0) {
+          return uploadFailed(c, to, null, new UploadError('NO_FILE', 'Choose a file or give a path.'));
+        }
+        await addVideo(root, filePath, { copy: field(body, 'copy') === 'on' });
+        return uploadOk(c, to, 'Footage imported', null);
       }
 
-      const filePath = field(body, 'path');
-      if (filePath.length === 0) return back(c, to, undefined, 'Choose a file or give a path.');
+      const declared = Number(c.req.header('content-length'));
+      record = beginUpload({
+        projectRef: ref,
+        ownerId: ownerFor(c),
+        bytesExpected: Number.isFinite(declared) && declared > 0 ? declared : null,
+        // The browser names the upload up front so that if the connection dies
+        // before any response, it still knows what to ask /uploads/:id about.
+        id: c.req.header('x-upload-id'),
+      });
 
-      await addVideo(root, filePath, { copy: field(body, 'copy') === 'on' });
-      return back(c, to, 'Footage imported');
+      const received = await receiveVideoUpload(c, {
+        root,
+        record,
+        exists: (target) => existsSync(target),
+      });
+
+      if (received.savedPath !== null) {
+        importingUpload(record);
+        try {
+          await addVideo(root, received.savedPath);
+        } catch (error) {
+          // The copy in source/ is ours alone; a rejected import must not leave
+          // it behind to collide with the user's next attempt.
+          await unlink(received.savedPath).catch(() => undefined);
+          throw error;
+        }
+        finishUpload(record);
+        return uploadOk(c, to, 'Footage imported', record);
+      }
+
+      // No file part — the user filled in the server-path field instead.
+      const filePath = (received.fields['path'] ?? '').trim();
+      if (filePath.length === 0) {
+        return uploadFailed(c, to, record, new UploadError('NO_FILE', 'Choose a file or give a path.'));
+      }
+      await addVideo(root, filePath, { copy: received.fields['copy'] === 'on' });
+      finishUpload(record);
+      return uploadOk(c, to, 'Footage imported', record);
     } catch (error) {
-      return back(c, to, undefined, failed(error));
+      return uploadFailed(c, to, record, error);
+    }
+  });
+
+  /**
+   * The progress and outcome of one upload, by id alone. The uploader polls
+   * this when a connection drops mid-post, which is the case where the browser
+   * itself can tell the user nothing at all.
+   */
+  app.get('/uploads/:id', (c) => {
+    const record = getUploadFor(c.req.param('id') ?? '', ownerFor(c));
+    if (record === undefined) {
+      return c.json({ ok: false, code: 'NOT_FOUND', error: 'No such upload.' }, 404);
+    }
+    return c.json({ ok: true, upload: view(record) });
+  });
+
+  // ── Uploads: resumable, chunked, and fully CRUD-able ──────────────────────
+  //
+  // The one-shot form post above still works and always will. This is the
+  // surface the browser uses: a file is created, its bytes are appended in
+  // chunks at explicit offsets, and it is finished as a separate step. Because
+  // the offset is durable, an upload that dies part-way resumes rather than
+  // restarting — which is the whole point.
+
+  /** List — every upload for a project, newest first. */
+  app.get('/projects/:ref/uploads', async (c) => {
+    const ref = c.req.param('ref') ?? '';
+    try {
+      await rootOf(c); // Authorises the project before revealing anything.
+      return c.json({
+        ok: true,
+        uploads: listUploads({
+          ownerId: ownerFor(c),
+          projectRef: ref,
+          includeFinished: c.req.query('active') !== 'true',
+        }).map(view),
+      });
+    } catch (error) {
+      return uploadJson(c, error);
+    }
+  });
+
+  /** Create — reserve an upload and check everything cheap up front. */
+  app.post('/projects/:ref/uploads', async (c) => {
+    const bad = await guard(c);
+    if (bad !== null) return bad;
+    const ref = c.req.param('ref') ?? '';
+
+    try {
+      const root = await rootOf(c);
+      const body = (await c.req.json().catch(() => ({}))) as {
+        fileName?: string;
+        size?: number;
+        id?: string;
+      };
+      const record = await createSession({
+        root,
+        projectRef: ref,
+        ownerId: ownerFor(c),
+        fileName: typeof body.fileName === 'string' ? body.fileName : '',
+        size: Number(body.size),
+        ...(typeof body.id === 'string' ? { id: body.id } : {}),
+        exists: (target) => existsSync(target),
+      });
+      c.header('x-upload-id', record.id);
+      return c.json({ ok: true, upload: view(record) }, 201);
+    } catch (error) {
+      return uploadJson(c, error);
+    }
+  });
+
+  /** Read — where did it get to, and did it fail? */
+  app.get('/projects/:ref/uploads/:id', async (c) => {
+    try {
+      const root = await rootOf(c);
+      const record = await findSession(root, c.req.param('id') ?? '', ownerFor(c));
+      return c.json({ ok: true, upload: view(record) });
+    } catch (error) {
+      return uploadJson(c, error);
+    }
+  });
+
+  /**
+   * Append one chunk at `x-upload-offset`. Mismatched offsets are refused with
+   * the offset to use, so a confused client corrects itself instead of quietly
+   * corrupting the file.
+   */
+  app.put('/projects/:ref/uploads/:id/data', async (c) => {
+    const bad = await guard(c);
+    if (bad !== null) return bad;
+
+    try {
+      const root = await rootOf(c);
+      const record = await findSession(root, c.req.param('id') ?? '', ownerFor(c));
+      const offset = Number(c.req.header('x-upload-offset') ?? Number.NaN);
+      if (!Number.isInteger(offset) || offset < 0) {
+        throw new UploadError('INVALID_INPUT', 'A numeric x-upload-offset header is required.');
+      }
+      const body = c.req.raw.body;
+      if (body === null) throw new UploadError('UPLOAD_INCOMPLETE', 'The chunk had no body.');
+
+      // A retried chunk that already landed is a success, not a conflict.
+      if (record.status === 'failed') reopenUpload(record);
+      await appendChunk({ record, offset, body });
+      return c.json({ ok: true, upload: view(record) });
+    } catch (error) {
+      return uploadJson(c, error);
+    }
+  });
+
+  /**
+   * Finish — promote the scratch file and import it. Separate from the last
+   * chunk so the import can be retried without re-sending anything.
+   */
+  app.post('/projects/:ref/uploads/:id/finish', async (c) => {
+    const bad = await guard(c);
+    if (bad !== null) return bad;
+
+    let record: UploadRecord | null = null;
+    try {
+      const root = await rootOf(c);
+      record = await findSession(root, c.req.param('id') ?? '', ownerFor(c));
+      if (record.status === 'done') return c.json({ ok: true, upload: view(record) });
+
+      reopenUpload(record);
+      const stored = await promoteSession(root, record);
+      importingUpload(record);
+      try {
+        const video = await addVideo(root, stored);
+        finishUpload(record, video.id);
+      } catch (error) {
+        // Put the bytes back in scratch: the upload is still good, only the
+        // import failed, so a rename or a retry costs nothing.
+        await demoteSession(record);
+        throw error;
+      }
+      return c.json({ ok: true, upload: view(record) });
+    } catch (error) {
+      return uploadJson(c, error, record);
+    }
+  });
+
+  /** Update — rename the destination. Fixes a collision without re-uploading. */
+  app.patch('/projects/:ref/uploads/:id', async (c) => {
+    const bad = await guard(c);
+    if (bad !== null) return bad;
+
+    try {
+      const root = await rootOf(c);
+      const record = await findSession(root, c.req.param('id') ?? '', ownerFor(c));
+      const body = (await c.req.json().catch(() => ({}))) as { fileName?: string };
+      if (typeof body.fileName !== 'string') {
+        throw new UploadError('INVALID_INPUT', 'Give a fileName to change.');
+      }
+      await renameSession({ root, record, fileName: body.fileName, exists: (t) => existsSync(t) });
+      if (record.status === 'failed') reopenUpload(record);
+      return c.json({ ok: true, upload: view(record) });
+    } catch (error) {
+      return uploadJson(c, error);
+    }
+  });
+
+  /**
+   * Delete — cancel an upload in flight, or forget a finished one. Never
+   * touches footage that has already been imported; that is what the video
+   * delete route is for.
+   */
+  app.delete('/projects/:ref/uploads/:id', async (c) => {
+    const bad = await guard(c);
+    if (bad !== null) return bad;
+
+    try {
+      const root = await rootOf(c);
+      const record = await findSession(root, c.req.param('id') ?? '', ownerFor(c));
+      if (record.status === 'done') {
+        await discardSession(root, record);
+        forgetUpload(record.id);
+        return c.json({ ok: true, deleted: record.id, keptVideo: record.videoId });
+      }
+      await cancelSession(root, record);
+      forgetUpload(record.id);
+      return c.json({ ok: true, deleted: record.id, keptVideo: null });
+    } catch (error) {
+      return uploadJson(c, error);
     }
   });
 

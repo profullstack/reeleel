@@ -74,6 +74,36 @@ const STYLES = `
   th { color: var(--muted); font-weight: 500; font-size: .8rem; }
   code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; }
   .empty { color: var(--muted); padding: 2rem 0; }
+
+  /* ── Realtime uploader ─────────────────────────────────────────────────── */
+  .dropzone {
+    border: 2px dashed var(--line); border-radius: .6rem;
+    padding: 1.6rem 1rem; text-align: center; cursor: pointer;
+    transition: border-color .12s ease, background .12s ease;
+  }
+  .dropzone:hover, .dropzone.dragging { border-color: var(--accent); background: var(--card); }
+  .dropzone.dragging { border-style: solid; }
+  .upload-item { margin-top: .6rem; }
+  .upload-meta { margin-top: .4rem; font-size: .85rem; }
+  .upload-error { display: inline-block; margin: .5rem 0 0; padding: .3rem .6rem; }
+  .upload-total { margin: .75rem 0 .25rem; display: grid; gap: .3rem; }
+  progress {
+    width: 100%; height: .5rem; appearance: none; border: 0;
+    border-radius: 999px; overflow: hidden; background: var(--line);
+  }
+  progress::-webkit-progress-bar { background: var(--line); }
+  progress::-webkit-progress-value { background: var(--accent); transition: width .15s linear; }
+  progress::-moz-progress-bar { background: var(--accent); }
+  /* An indeterminate bar means "working, duration unknown" — importing. */
+  progress:not([value]) { background:
+    repeating-linear-gradient(90deg, var(--accent) 0 1rem, var(--line) 1rem 2rem);
+    animation: upload-sweep 1s linear infinite;
+  }
+  @keyframes upload-sweep { to { background-position: 2rem 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    progress:not([value]) { animation: none; }
+    progress::-webkit-progress-value { transition: none; }
+  }
 `;
 
 export const Layout: FC<PropsWithChildren<{ title: string }>> = ({ title, children }) => (
