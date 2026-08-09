@@ -1,5 +1,5 @@
 /** @jsxImportSource hono/jsx/dom */
-import { render, useRef, useState } from 'hono/jsx/dom';
+import { render, useEffect, useRef, useState } from 'hono/jsx/dom';
 
 /**
  * The realtime uploader.
@@ -182,9 +182,34 @@ const Uploader = ({ base }: { base: string }) => {
   const [, bump] = useState(0);
   const [dragging, setDragging] = useState(false);
   const input = useRef<HTMLInputElement | null>(null);
+  /** Uploads the *server* knows about, which outlive this page. */
+  const [remote, setRemote] = useState<UploadDto[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
+  const resumeInput = useRef<HTMLInputElement | null>(null);
+  const resumeTarget = useRef<UploadDto | null>(null);
   // The upload driver is imperative and long-lived, so it mutates items in a
   // ref and asks for a repaint, rather than fighting stale closures.
   const paint = (): void => bump((n) => n + 1);
+
+  /**
+   * An upload belongs to the server, not to this page. Listing them is what
+   * makes an interrupted transfer recoverable at all: after a reload — or a
+   * server restart — the bytes are still on disk, but without this the browser
+   * would have no idea they existed and the user would start over for nothing.
+   */
+  const refresh = async (): Promise<void> => {
+    try {
+      const body = await api(`${base}/uploads`);
+      setRemote(body.uploads ?? []);
+      setListError(null);
+    } catch (error) {
+      setListError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+  }, []);
 
   const patch = (key: string, changes: Partial<Item>): void => {
     const found = items.current.find((item) => item.key === key);
@@ -288,15 +313,16 @@ const Uploader = ({ base }: { base: string }) => {
     }
   };
 
-  const add = (files: FileList | File[]): void => {
+  const add = (files: FileList | File[], adopt?: UploadDto): void => {
     for (const file of Array.from(files)) {
       const key = `${file.name}:${file.size}:${Math.random().toString(36).slice(2)}`;
       items.current.push({
         key,
         file,
-        name: file.name,
-        id: null,
-        offset: 0,
+        // Adopting keeps the server's chosen name, which may have been renamed.
+        name: adopt?.fileName ?? file.name,
+        id: adopt?.id ?? null,
+        offset: adopt?.offset ?? 0,
         phase: 'queued',
         code: null,
         error: null,
@@ -307,6 +333,78 @@ const Uploader = ({ base }: { base: string }) => {
       });
       paint();
       void drive(key);
+    }
+  };
+
+  // ── Uploads the server is already holding ────────────────────────────────
+
+  /**
+   * Picks up an upload started on some earlier visit. The browser cannot reopen
+   * a file it was given before — a File handle does not survive a reload — so
+   * the user has to point at the same file again. Everything already on the
+   * server is kept; only the missing tail is sent.
+   */
+  const resumeRemote = (dto: UploadDto): void => {
+    resumeTarget.current = dto;
+    resumeInput.current?.click();
+  };
+
+  const onResumeFile = (file: File): void => {
+    const dto = resumeTarget.current;
+    resumeTarget.current = null;
+    if (dto === null) return;
+
+    if (dto.bytesExpected !== null && file.size !== dto.bytesExpected) {
+      // Resuming with different bytes would splice two files together and
+      // produce a video that is corrupt in a way nothing downstream can see.
+      setListError(
+        `That file is ${size(file.size)}, but this upload expects ${size(dto.bytesExpected)}. ` +
+          'Choose the same file, or delete the upload and start again.',
+      );
+      return;
+    }
+    setListError(null);
+    setRemote((current) => current.filter((entry) => entry.id !== dto.id));
+    add([file], dto);
+  };
+
+  const renameRemote = async (dto: UploadDto): Promise<void> => {
+    const next = window.prompt('Import this upload as:', dto.fileName ?? '');
+    if (next === null || next.trim().length === 0) return;
+    try {
+      await api(`${base}/uploads/${dto.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ fileName: next.trim() }),
+      });
+      await refresh();
+    } catch (error) {
+      setListError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const deleteRemote = async (dto: UploadDto): Promise<void> => {
+    const finished = dto.status === 'done';
+    const question = finished
+      ? 'Clear this upload record? The imported footage is kept.'
+      : `Delete this upload? ${size(dto.offset)} already sent will be discarded.`;
+    if (!window.confirm(question)) return;
+    try {
+      await api(`${base}/uploads/${dto.id}`, { method: 'DELETE' });
+      await refresh();
+    } catch (error) {
+      setListError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  /** Retries the import for bytes that are already fully uploaded. */
+  const finishRemote = async (dto: UploadDto): Promise<void> => {
+    try {
+      await api(`${base}/uploads/${dto.id}/finish`, { method: 'POST' });
+      await refresh();
+      window.setTimeout(() => window.location.reload(), 800);
+    } catch (error) {
+      setListError(error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -359,6 +457,9 @@ const Uploader = ({ base }: { base: string }) => {
   const active = list.filter((item) => item.phase !== 'done' && item.phase !== 'canceled');
   const totalBytes = active.reduce((sum, item) => sum + item.file.size, 0);
   const doneBytes = active.reduce((sum, item) => sum + item.offset, 0);
+  // Anything this page is already driving is shown as a live card instead.
+  const driving = new Set(list.map((item) => item.id).filter((id): id is string => id !== null));
+  const stored = remote.filter((dto) => !driving.has(dto.id));
 
   return (
     <div>
@@ -387,6 +488,20 @@ const Uploader = ({ base }: { base: string }) => {
           }}
         />
       </div>
+
+      {/* Used only to re-attach a file to an upload the server already holds. */}
+      <input
+        ref={resumeInput}
+        type="file"
+        accept="video/mp4,video/quicktime,video/x-matroska,video/webm"
+        style="display:none"
+        onChange={(event: Event) => {
+          const target = event.target as HTMLInputElement;
+          const picked = target.files?.[0];
+          if (picked !== undefined) onResumeFile(picked);
+          target.value = '';
+        }}
+      />
 
       {active.length > 1 ? (
         <div class="upload-total">
@@ -456,6 +571,77 @@ const Uploader = ({ base }: { base: string }) => {
           </div>
         );
       })}
+
+      {/* Uploads the server is holding from an earlier visit. Without this the
+          bytes already on disk would be invisible and the user would re-send
+          them for nothing. */}
+      {stored.length === 0 ? null : (
+        <div class="stored-uploads">
+          <div class="row">
+            <h3 class="grow">Uploads on the server</h3>
+            <button type="button" onClick={() => void refresh()}>
+              Refresh
+            </button>
+          </div>
+
+          {stored.map((dto) => {
+            const complete = dto.bytesExpected !== null && dto.offset >= dto.bytesExpected;
+            return (
+              <div class="card upload-item" key={dto.id}>
+                <div class="row">
+                  <code class="grow">{dto.fileName ?? '(unnamed)'}</code>
+                  <span
+                    class={`pill ${dto.status === 'done' ? 'keep' : dto.status === 'failed' ? 'reject' : ''}`}
+                  >
+                    {dto.status}
+                  </span>
+                </div>
+
+                {dto.status === 'done' ? null : (
+                  <progress max={dto.bytesExpected ?? 1} value={dto.offset} />
+                )}
+
+                <div class="row upload-meta">
+                  <span class="muted grow">
+                    {dto.status === 'done'
+                      ? `${size(dto.offset)} imported`
+                      : `${size(dto.offset)} of ${dto.bytesExpected === null ? '?' : size(dto.bytesExpected)} on the server` +
+                        (complete ? ' — ready to import' : ' — needs the rest of the file')}
+                  </span>
+
+                  {dto.status !== 'done' && complete ? (
+                    <button type="button" onClick={() => void finishRemote(dto)}>
+                      Import
+                    </button>
+                  ) : null}
+                  {dto.status !== 'done' && !complete ? (
+                    <button type="button" onClick={() => resumeRemote(dto)}>
+                      Resume…
+                    </button>
+                  ) : null}
+                  {dto.status === 'done' ? null : (
+                    <button type="button" onClick={() => void renameRemote(dto)}>
+                      Rename
+                    </button>
+                  )}
+                  <button type="button" onClick={() => void deleteRemote(dto)}>
+                    {dto.status === 'done' ? 'Clear' : 'Delete'}
+                  </button>
+                </div>
+
+                {dto.error === null ? null : (
+                  <p class="pill reject upload-error">
+                    {dto.error}
+                    {dto.hint === null ? '' : ` ${dto.hint}`} — {dto.code}, upload {dto.id}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {listError === null ? null : <p class="pill reject upload-error">{listError}</p>}
     </div>
   );
 };
