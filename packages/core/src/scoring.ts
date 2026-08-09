@@ -139,13 +139,16 @@ const medianOf = (values: number[]): number => {
   return ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2;
 };
 
-export const buildContext = (input: ScoringInput): SignalContext => {
+export const buildContext = (input: ScoringInput, targetClass: string | null = 'goal'): SignalContext => {
   const focal =
     input.focalTrackId === null
       ? null
       : (input.tracks.find((track) => track.id === input.focalTrackId) ?? null);
   const ball = input.tracks.find((track) => track.className === 'ball') ?? null;
-  const goals = input.tracks.filter((track) => track.className === 'goal');
+  // The scoring target is named by the sport, not assumed to be "goal":
+  // basketball tracks a `hoop`, hockey a `net`, football an `end_zone`.
+  const goals =
+    targetClass === null ? [] : input.tracks.filter((track) => track.className === targetClass);
   const others = input.tracks.filter(
     (track) => track.className === 'player' || track.className === 'goalkeeper',
   );
@@ -301,7 +304,7 @@ export const computeMoments = (input: ScoringInput, plugin: SportPlugin): Scored
   const step = input.windowSeconds ?? 1;
   if (step <= 0 || input.durationSeconds <= 0) return [];
 
-  const context = buildContext(input);
+  const context = buildContext(input, plugin.targetClass);
   const windows: WindowScore[] = [];
   for (let ts = 0; ts <= input.durationSeconds; ts += step) {
     windows.push(scoreWindow(context, plugin, ts));

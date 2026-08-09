@@ -7,6 +7,7 @@ import { changes, execute, projectDb } from './db.js';
 import { ReelEelError } from './errors.js';
 import { run } from './ffmpeg.js';
 import { createJob, logJob, updateJob } from './jobs.js';
+import { getFocalAthlete } from './athletes.js';
 import { generateMoments } from './moments.js';
 import { generateProxy, generateThumbnails } from './media.js';
 import { readManifest } from './projects.js';
@@ -184,6 +185,27 @@ export const analyzeProject = async (
   }
 
   const job = await createJob(root, 'detection', { preset, videoIds: videos.map((v) => v.id) });
+
+  /**
+   * Said before the work, not after it.
+   *
+   * Three of the seven scoring signals need a focal track, and together they
+   * carry 0.6 of the 1.15 total weight. Without one the only signal that can
+   * fire is high_motion at 0.1, so the highest score any window can reach is
+   * 0.087 — against a threshold of 0.35. Not "unlikely": arithmetically
+   * impossible. Spending a minute of detection to prove that, and then
+   * reporting "completed", is the least useful thing this could do.
+   */
+  if ((await getFocalAthlete(root)) === null) {
+    await logJob(
+      root,
+      job.id,
+      'No athlete is marked to follow. Scoring cannot reach the ' +
+        `${plugin.moments.minScore} threshold without one — the focal signals carry most of the ` +
+        'weight, so this run will find tracks but suggest nothing. Mark an athlete and run again.',
+      'warn',
+    );
+  }
   options.onStart?.(job);
   const stage = async (name: string, progress: number, detail?: string): Promise<void> => {
     options.onStage?.(name, detail);
