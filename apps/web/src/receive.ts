@@ -111,7 +111,7 @@ export const withStallTimeout = (
 };
 
 /** Refuses an upload that cannot possibly fit, rather than filling the disk. */
-const assertRoomFor = async (dir: string, bytes: number | null): Promise<void> => {
+export const assertRoomFor = async (dir: string, bytes: number | null): Promise<void> => {
   if (bytes === null) return;
   let free: number;
   try {

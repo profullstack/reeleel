@@ -183,27 +183,35 @@ export const ProjectPage: FC<ProjectView> = ({
 
       <details class="card" open={videos.length === 0}>
         <summary>Import footage</summary>
-        {/* Upload for a hosted instance; a path for a local one, where the
-            footage is already on this machine and should stay put. */}
-        {/* data-upload lets the client island take over and show real progress
-            and real errors. Without JavaScript this stays an ordinary form post,
-            which the server streams to disk just the same. */}
-        <form
-          method="post"
-          action={`${base}/videos`}
-          enctype="multipart/form-data"
-          data-upload
-          style="margin-top:.75rem"
-        >
+
+        {/* The realtime uploader replaces the contents of this element on
+            mount. What is rendered here is the no-JavaScript fallback: an
+            ordinary multipart post, which the server streams to disk just the
+            same. The upgrade is resumability and a status bar, not the ability
+            to upload at all. */}
+        <div id="upload-panel" data-base={base} style="margin-top:.75rem">
+          <form method="post" action={`${base}/videos`} enctype="multipart/form-data">
+            <div class="field">
+              <label for="file">Upload a file</label>
+              <input
+                id="file"
+                name="file"
+                type="file"
+                accept="video/mp4,video/quicktime,video/x-matroska,video/webm"
+              />
+            </div>
+            <button type="submit">Import</button>
+          </form>
+        </div>
+
+        {/* A path for a local instance, where the footage is already on this
+            machine and should stay where it is. */}
+        <form method="post" action={`${base}/videos`} style="margin-top:1rem">
           <div class="field">
-            <label for="file">Upload a file</label>
-            <input id="file" name="file" type="file" accept="video/mp4,video/quicktime,video/x-matroska,video/webm" />
-          </div>
-          <div class="field">
-            <label for="path">…or a path on the server</label>
+            <label for="path">…or import a path already on the server</label>
             <input id="path" name="path" type="text" placeholder="/data/footage/game.mp4" />
           </div>
-          <button type="submit">Import</button>
+          <button type="submit">Import path</button>
         </form>
       </details>
 
