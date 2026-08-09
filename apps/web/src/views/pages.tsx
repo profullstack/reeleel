@@ -185,7 +185,16 @@ export const ProjectPage: FC<ProjectView> = ({
         <summary>Import footage</summary>
         {/* Upload for a hosted instance; a path for a local one, where the
             footage is already on this machine and should stay put. */}
-        <form method="post" action={`${base}/videos`} enctype="multipart/form-data" style="margin-top:.75rem">
+        {/* data-upload lets the client island take over and show real progress
+            and real errors. Without JavaScript this stays an ordinary form post,
+            which the server streams to disk just the same. */}
+        <form
+          method="post"
+          action={`${base}/videos`}
+          enctype="multipart/form-data"
+          data-upload
+          style="margin-top:.75rem"
+        >
           <div class="field">
             <label for="file">Upload a file</label>
             <input id="file" name="file" type="file" accept="video/mp4,video/quicktime,video/x-matroska,video/webm" />

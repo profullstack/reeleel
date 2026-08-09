@@ -47,6 +47,7 @@ import type { AuthUser } from '@reeleel/api';
 import {
   isReelEelError,
   listAthletes,
+  newId,
   listClips,
   listJobs,
   listMoments,
@@ -445,6 +446,30 @@ export const createWebApp = (): Hono => {
   });
 
   app.notFound((c) => c.html(<ErrorPage message="No such page." />, 404));
+
+  /**
+   * Anything that escapes a handler. Hono's default is a bare 500 with no log
+   * line at all, which is how a server-side fault becomes "it just didn't
+   * work" for the user *and* for whoever has to diagnose it afterwards. Every
+   * failure now gets an id that appears both on screen and next to the stack
+   * trace in the log.
+   */
+  app.onError((error, c) => {
+    const id = newId('err');
+    process.stderr.write(
+      `[error ${id}] ${c.req.method} ${c.req.path}\n${error.stack ?? String(error)}\n`,
+    );
+    if ((c.req.header('accept') ?? '').includes('application/json')) {
+      return c.json({ ok: false, code: 'UNKNOWN', error: error.message, errorId: id }, 500);
+    }
+    return c.html(
+      <ErrorPage
+        message={error.message}
+        hint={`Reference ${id} — the full details are in the server log.`}
+      />,
+      500,
+    );
+  });
 
   return app;
 };
