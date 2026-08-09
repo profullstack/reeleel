@@ -3,11 +3,13 @@
   "build": {
     "builder": "DOCKERFILE",
     "dockerfilePath": "Dockerfile",
+    "//": "The Dockerfile does `COPY . .` and builds the whole workspace, so anything it copies can change the image. Listing only some of it means a merged fix can sit undeployed with nothing to say so: apps/cv-worker was missing, and a detection fix stayed dark because the only file it touched was outside this list. Watching a little too much costs a spare build; watching too little costs a silent non-deploy.",
     "watchPatterns": [
-      "apps/web/**",
-      "apps/api/**",
+      "apps/**",
       "packages/**",
+      "workers/**",
       "Dockerfile",
+      "docker-entrypoint.sh",
       "package.json",
       "pnpm-lock.yaml",
       "pnpm-workspace.yaml",
