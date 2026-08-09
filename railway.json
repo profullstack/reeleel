@@ -1,11 +1,13 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
-    "builder": "RAILPACK",
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile",
     "watchPatterns": [
       "apps/web/**",
       "apps/api/**",
       "packages/**",
+      "Dockerfile",
       "package.json",
       "pnpm-lock.yaml",
       "pnpm-workspace.yaml",
@@ -13,7 +15,6 @@
     ]
   },
   "deploy": {
-    "startCommand": "pnpm start",
     "healthcheckPath": "/api/health",
     "healthcheckTimeout": 60,
     "restartPolicyType": "ON_FAILURE",

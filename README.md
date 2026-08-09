@@ -149,26 +149,39 @@ pnpm db:migrate --scope project --path ./my-game/project.db
 
 ## Deploying the web app
 
-The repo root exposes the two scripts a platform looks for:
+Deployment is **Docker**, not a buildpack, for one decisive reason: ReelEel
+shells out to FFmpeg for every media operation. A stock Node image has no
+`ffmpeg`, so `reeleel doctor` reports a hard failure and nothing past import
+works. The [`Dockerfile`](Dockerfile) installs it explicitly.
 
 ```bash
-pnpm build    # builds every package and app, including the client bundle
-pnpm start    # serves @reeleel/web (SSR pages + API) on $PORT
+docker build -t reeleel .
+docker run --rm -p 8080:8080 -v reeleel-data:/data reeleel
 ```
 
-`pnpm start` binds `0.0.0.0` so a container is reachable; the app's own default
-stays on loopback, because a server that can read and delete local project
-directories should not listen on every interface unless someone asked for it.
+Then check `http://localhost:8080/doctor` — ffmpeg and ffprobe should both be
+green.
 
-[`railway.json`](railway.json) sets the start command, a `/api/health`
-healthcheck and an on-failure restart policy.
+[`railway.json`](railway.json) selects the Dockerfile builder, a `/api/health`
+healthcheck and an on-failure restart policy. Locally, `pnpm build && pnpm start`
+still works without Docker if FFmpeg is on your PATH.
 
-Two things to know before pointing a public URL at it:
+Notes on the image:
 
-- **Container filesystems are ephemeral.** Projects and the machine registry
-  live on disk and vanish on redeploy. Set `REELEEL_DB_URL` and
-  `REELEEL_DB_AUTH_TOKEN` so the registry lives in Turso, and attach a volume
-  for project directories — otherwise treat the deploy as a demo.
+- **Debian slim, not Alpine.** `@libsql/client` ships glibc prebuilt native
+  binaries; on musl it would fall back to building from source or fail.
+- **Runs as `node`, not root**, and binds `0.0.0.0` only because a container
+  must. The app's own default stays on loopback.
+- **`/data` is a volume.** `REELEEL_HOME=/data` and
+  `REELEEL_PROJECTS_DIR=/data/projects` put the registry, config and projects
+  there, so they survive a redeploy. Without a mounted volume the container
+  filesystem is ephemeral and everything resets.
+
+Two things to settle before pointing a public URL at it:
+
+- **Persistence.** Mount a volume at `/data`, and consider setting
+  `REELEEL_DB_URL` / `REELEEL_DB_AUTH_TOKEN` so the machine registry lives in
+  Turso rather than on the container disk.
 - **There is no authentication.** The API can list, modify and delete any
   project the server can see. That is the right trade for something running on
   your own machine and the wrong one for the open internet. Put it behind auth

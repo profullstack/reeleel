@@ -39,10 +39,20 @@ export interface ReelEelConfig {
   };
 }
 
+/**
+ * Where new projects go. In a container the home directory is ephemeral, so
+ * REELEEL_PROJECTS_DIR lets a deployment point this at a mounted volume without
+ * shipping a config file.
+ */
+const defaultProjectsDir = (): string => {
+  const fromEnv = process.env['REELEEL_PROJECTS_DIR'];
+  return fromEnv !== undefined && fromEnv.length > 0 ? fromEnv : path.join(homedir(), 'ReelEel');
+};
+
 export const defaultConfig = (): ReelEelConfig => ({
   ffmpeg: { ffmpeg: null, ffprobe: null },
   analysis: { preset: 'balanced', backend: 'auto', threads: 0, sampleEveryNthFrame: 2 },
-  projects: { dir: path.join(homedir(), 'ReelEel'), copySource: false },
+  projects: { dir: defaultProjectsDir(), copySource: false },
   export: { aspect: '16:9', fps: 30, quality: 'high', watermark: false },
   privacy: { telemetry: false, stripMetadataOnExport: true },
 });

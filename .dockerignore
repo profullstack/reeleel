@@ -1,0 +1,65 @@
+# Keep the build context small and the image reproducible. Anything generated
+# is rebuilt inside the image rather than copied from the host.
+.git
+.gitignore
+.claude
+.vscode
+.idea
+
+node_modules
+**/node_modules
+
+dist
+**/dist
+**/*.tsbuildinfo
+apps/web/public/client.js
+apps/web/public/client.js.map
+
+coverage
+.nyc_output
+.vitest
+.eslintcache
+.cache
+.turbo
+
+.env
+.env.*
+!.env.example
+
+# Python CV worker artifacts (the worker itself is not in the image yet)
+**/__pycache__
+**/*.py[cod]
+.venv
+**/*.egg-info
+
+# Local databases and user data must never leak into an image layer
+*.db
+*.db-wal
+*.db-shm
+*.sqlite*
+/projects
+/proxies
+/thumbnails
+/analysis
+/clips
+/exports
+/models
+
+# Media and weights
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.m4v
+*.avi
+*.mp3
+*.m4a
+*.wav
+*.onnx
+*.pt
+*.pth
+*.safetensors
+
+tmp
+scratch
+*.log

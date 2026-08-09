@@ -304,7 +304,8 @@ Useful keys:
 | Variable | Purpose |
 | --- | --- |
 | `REELEEL_PROJECT` | Default project reference |
-| `REELEEL_HOME` | Override config/data/cache root (tests and portable installs) |
+| `REELEEL_HOME` | Override config/data/cache root (tests, portable installs, containers) |
+| `REELEEL_PROJECTS_DIR` | Where `project create` puts new projects (default `~/ReelEel`) |
 | `REELEEL_FFMPEG`, `REELEEL_FFPROBE` | Explicit binary paths |
 | `REELEEL_DB_URL`, `REELEEL_DB_AUTH_TOKEN` | Turso for the machine-wide registry |
 | `REELEEL_DB_REPLICA_PATH`, `REELEEL_DB_SYNC_INTERVAL` | Embedded replica tuning |
