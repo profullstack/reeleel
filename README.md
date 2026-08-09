@@ -172,6 +172,10 @@ Notes on the image:
   binaries; on musl it would fall back to building from source or fail.
 - **Runs as `node`, not root**, and binds `0.0.0.0` only because a container
   must. The app's own default stays on loopback.
+  [`docker-entrypoint.sh`](docker-entrypoint.sh) starts as root just long
+  enough to take ownership of `/data` — platform volumes mount root-owned and
+  empty, so an unprivileged process could not write to them — then execs as
+  `node` via `gosu`.
 - **`/data` is a volume.** `REELEEL_HOME=/data` and
   `REELEEL_PROJECTS_DIR=/data/projects` put the registry, config and projects
   there, so they survive a redeploy. Without a mounted volume the container

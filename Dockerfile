@@ -49,9 +49,10 @@ RUN pnpm install --frozen-lockfile --prod --ignore-scripts \
 FROM node:22-slim AS runner
 
 # ffmpeg provides both ffmpeg and ffprobe, which is what `reeleel doctor` looks
-# for. ca-certificates is needed for Turso over TLS.
+# for. ca-certificates is needed for Turso over TLS. gosu lets the entrypoint
+# fix volume ownership as root and then drop to an unprivileged user.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+  && apt-get install -y --no-install-recommends ffmpeg ca-certificates gosu \
   && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production
@@ -69,9 +70,10 @@ WORKDIR /app
 # builder stage, so the pnpm workspace links still resolve.
 COPY --from=builder --chown=node:node /app /app
 
-RUN mkdir -p /data/projects && chown -R node:node /data
-
-USER node
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
+  && mkdir -p /data/projects \
+  && chown -R node:node /data
 
 VOLUME ["/data"]
 EXPOSE 8080
@@ -80,4 +82,7 @@ EXPOSE 8080
 # relative to the working directory.
 WORKDIR /app/apps/web
 
+# Starts as root only long enough to take ownership of a freshly mounted
+# volume, then execs as `node`. See docker-entrypoint.sh.
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["node", "dist/index.js"]
