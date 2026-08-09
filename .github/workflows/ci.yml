@@ -1,0 +1,101 @@
+name: CI
+
+# Nothing has ever run these tests except a developer's laptop. Detection was
+# broken for the entire life of the product by a 416-vs-768 input mismatch that
+# the detector integration test exists specifically to catch — it just never
+# ran, because CI had no model to run it against. Hence two jobs: a fast one on
+# every push, and a slower one that fetches the real weights.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer push makes an in-flight run irrelevant; do not pay for both.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: lint, typecheck, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          # Taken from package.json's packageManager field.
+          version: 11.18.0
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches the Dockerfile's node:22-slim, so CI and production agree.
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Before lint and typecheck, not after: packages resolve each other
+      # through dist/, so nothing type-checks until the graph is built.
+      - name: Build
+        run: pnpm build
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test:run
+
+  detector:
+    name: real detector model
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.18.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      # 20 MB from a GitHub release. Cached on the model's name and version, so
+      # it is fetched once and then reused until the default model changes.
+      - name: Cache detector weights
+        id: weights
+        uses: actions/cache@v4
+        with:
+          path: .ci-models
+          key: yolox-tiny-0.1.1rc0
+
+      - name: Fetch detector weights
+        if: steps.weights.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p .ci-models
+          node apps/cv-worker/dist/index.js fetch-model \
+            --sport soccer --output .ci-models/yolox-tiny.onnx
+
+      # The assumptions unit tests cannot check: the real input size, the real
+      # output shape, and whether the decode grid matches what the model emits.
+      - name: Detector integration tests
+        env:
+          REELEEL_CV_MODEL: ${{ github.workspace }}/.ci-models/yolox-tiny.onnx
+        run: pnpm exec vitest run apps/cv-worker

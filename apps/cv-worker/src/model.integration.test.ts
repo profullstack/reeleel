@@ -2,7 +2,9 @@ import { existsSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import { createSession } from './pipeline.js';
+import { PRESET_SETTINGS } from '@reeleel/core';
+
+import { createSession, staticInputSize } from './pipeline.js';
 import { decodeYolox, predictionCount } from './yolox.js';
 
 /**
@@ -28,6 +30,53 @@ describe.skipIf(!available)('real YOLOX model', () => {
       const session = await createSession(modelPath as string, 1);
       expect(session.inputNames.length).toBeGreaterThan(0);
       expect(session.outputNames.length).toBeGreaterThan(0);
+      await session.release();
+    },
+    120_000,
+  );
+
+  /**
+   * The regression that broke detection for the entire life of the product.
+   *
+   * The model exports a fixed 416x416 input; every preset asked for something
+   * else (512, 768, 1280) and onnxruntime rejected all of them. Nothing caught
+   * it, because the tests above assert that 416 works — not that 416 is what
+   * the pipeline will actually send.
+   *
+   * These assert the agreement itself, which is the thing that was broken.
+   */
+  it(
+    'declares the input size the pipeline resolves to',
+    async () => {
+      const session = await createSession(modelPath as string, 1);
+      expect(staticInputSize(session)).toBe(SIZE);
+      await session.release();
+    },
+    120_000,
+  );
+
+  it(
+    'accepts what every preset resolves to, not what every preset asks for',
+    async () => {
+      const session = await createSession(modelPath as string, 1);
+      const required = staticInputSize(session);
+      const ort = await import('onnxruntime-node');
+      const inputName = session.inputNames[0] as string;
+
+      for (const [preset, settings] of Object.entries(PRESET_SETTINGS)) {
+        // Exactly the substitution runPipeline performs.
+        const size = required ?? settings.inferenceSize;
+        const input = new ort.Tensor(
+          'float32',
+          new Float32Array(3 * size * size).fill(114),
+          [1, 3, size, size],
+        );
+        await expect(
+          session.run({ [inputName]: input }),
+          `preset "${preset}" asked for ${settings.inferenceSize}, resolved to ${size}`,
+        ).resolves.toBeDefined();
+      }
+
       await session.release();
     },
     120_000,
