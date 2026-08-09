@@ -42,6 +42,23 @@ export const createFileClient = (filePath: string): Client =>
   createClient({ url: `file:${filePath.replace(/^file:/, '')}` });
 
 /**
+ * Where an embedded replica is stored.
+ *
+ * Deliberately NOT the same file as the local-only database. libSQL keeps
+ * sidecar metadata beside a replica, so handing it a plain database written in
+ * local-only mode fails with:
+ *
+ *   Sync(InvalidLocalState("db file exists but metadata file does not"))
+ *
+ * Any machine that starts local and later adopts Turso would hit that, so the
+ * two modes get separate files.
+ */
+export const defaultReplicaPath = (localPath: string): string => {
+  const bare = localPath.replace(/^file:/, '');
+  return bare.endsWith('.db') ? `${bare.slice(0, -3)}-replica.db` : `${bare}-replica.db`;
+};
+
+/**
  * The machine-wide database. Local file unless REELEEL_DB_URL points at Turso,
  * in which case we use an embedded replica so reads stay local and offline-safe
  * and writes push through when there is a connection.
@@ -60,7 +77,7 @@ export const createGlobalClient = (localFallbackPath: string, env: DbEnv = readD
     );
   }
 
-  const replica = env.replicaPath ?? localFallbackPath;
+  const replica = env.replicaPath ?? defaultReplicaPath(localFallbackPath);
   return createClient({
     url: `file:${replica.replace(/^file:/, '')}`,
     syncUrl: url,
