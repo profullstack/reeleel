@@ -31,6 +31,7 @@ reeleel models add <name> --version <v> --sport soccer \
 | `@libsql/client` | MIT | libSQL/Turso client — local files and optional cloud sync |
 | `commander` | MIT | CLI argument parsing |
 | `chalk` | MIT | Terminal colour |
+| `onnxruntime-node` | MIT | CPU inference for the detection worker |
 
 ## Build and test dependencies
 
@@ -64,9 +65,24 @@ reeleel models add <name> --version <v> --sport soccer \
 
 | Model | Version | License | Dataset | Dataset license | Reviewed |
 | --- | --- | --- | --- | --- | --- |
-| _(none registered yet)_ | | | | | |
+| YOLOX-Tiny | 0.1.1rc0 | Apache-2.0 | COCO 2017 | CC BY 4.0 (annotations); images are Flickr-sourced under their own terms | yes |
 
-No model ships with ReelEel today. When one does, it gets a row here and a model
+**Why YOLOX and not YOLOv8.** Ultralytics' YOLOv8 weights are AGPL-3.0, which
+would impose obligations on anything distributing them. YOLOX is Apache-2.0 for
+both the framework *and* the released checkpoints, which is what makes it safe
+to bake into the container image.
+
+The weights are fetched from the YOLOX GitHub release and their SHA-256 is
+recorded when downloaded (`reeleel-cv fetch-model` prints it, and
+`reeleel models add --file` stores it). `reeleel models verify` re-checks it.
+
+**COCO caveat.** COCO *annotations* are CC BY 4.0, but the underlying images are
+Flickr photographs under their individual licenses; COCO distributes URLs and
+annotations rather than relicensing the photographs. This affects anyone
+redistributing the dataset, not a model trained on it, but it is the sort of
+detail that matters before shipping a derived dataset.
+
+No sport-specific model ships yet. When one does it gets a row here and a model
 card alongside it, covering: what it was trained on, how the data was obtained,
 consent and provenance for any footage of minors, and measured performance.
 

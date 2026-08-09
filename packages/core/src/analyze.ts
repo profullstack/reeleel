@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { loadConfig } from './config.js';
 import { changes, execute, projectDb } from './db.js';
@@ -54,13 +55,15 @@ export const settingsForPreset = (preset: Preset): PresetSettings => {
 export interface CvWorker {
   command: string;
   args: string[];
-  kind: 'binary' | 'python';
+  kind: 'binary' | 'python' | 'node';
 }
 
 export const resolveCvWorker = (): CvWorker | null => {
   const override = process.env['REELEEL_CV_WORKER'];
   if (override !== undefined && override.length > 0) {
-    return { command: override, args: [], kind: 'binary' };
+    return override.endsWith('.js')
+      ? { command: process.execPath, args: [override], kind: 'node' }
+      : { command: override, args: [], kind: 'binary' };
   }
 
   const onPath = process.env['PATH']?.split(path.delimiter) ?? [];
@@ -69,10 +72,24 @@ export const resolveCvWorker = (): CvWorker | null => {
     if (existsSync(candidate)) return { command: candidate, args: [], kind: 'binary' };
   }
 
-  const repoWorker = path.resolve(process.cwd(), 'workers', 'cv', 'reeleel_cv', '__main__.py');
-  if (existsSync(repoWorker)) {
+  // The in-repo worker, located relative to this module rather than the current
+  // directory — core is called from the CLI, the API and the web app, and only
+  // one of those reliably runs from the repository root.
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  for (let depth = 0; depth < 6; depth += 1) {
+    const candidate = path.join(dir, 'apps', 'cv-worker', 'dist', 'index.js');
+    if (existsSync(candidate)) {
+      return { command: process.execPath, args: [candidate], kind: 'node' };
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+
+  const pythonWorker = path.resolve(process.cwd(), 'workers', 'cv', 'reeleel_cv', '__main__.py');
+  if (existsSync(pythonWorker)) {
     const python = process.env['REELEEL_PYTHON'] ?? 'python3';
-    return { command: python, args: [repoWorker], kind: 'python' };
+    return { command: python, args: [pythonWorker], kind: 'python' };
   }
 
   return null;

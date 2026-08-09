@@ -38,11 +38,27 @@ COPY . .
 # Builds every package and app, including the web client bundle (esbuild).
 RUN pnpm build
 
+# Bake the detector weights in, so detection works out of the box rather than
+# needing a first-run download onto a volume. YOLOX is Apache-2.0, which is why
+# it can be redistributed in an image at all — see THIRD_PARTY_LICENSES.md.
+#
+# Soft-failure is deliberate: an outage at the weights host should not break a
+# deploy of the whole application. Without the file the worker returns an
+# actionable "no model" error and `reeleel-cv fetch-model` can fetch it later.
+RUN node apps/cv-worker/dist/index.js fetch-model \
+      --sport soccer --output /app/models/yolox-tiny.onnx \
+    || echo "WARNING: detector weights were not downloaded; detection will be unavailable"
+
 # Drop devDependencies now that dist/ exists. pnpm rebuilds node_modules from
 # the store with production deps only; the workspace symlinks are recreated and
 # the built dist/ directories live outside node_modules, so they survive.
 # confirmModulesPurge is belt-and-braces alongside CI=true above.
-RUN pnpm install --frozen-lockfile --prod --ignore-scripts \
+#
+# Scripts deliberately run: this rebuild discards the node_modules that the
+# first install populated, and onnxruntime-node's postinstall is what places
+# its native binaries. Skipping it produces an image whose detector cannot
+# load a model.
+RUN pnpm install --frozen-lockfile --prod \
       --config.confirmModulesPurge=false
 
 # ── Runner ──────────────────────────────────────────────────────────────────
@@ -63,6 +79,8 @@ ENV PORT=8080
 # Config, registry and cache. Mount a volume here to keep them across deploys.
 ENV REELEEL_HOME=/data
 ENV REELEEL_PROJECTS_DIR=/data/projects
+# Detector weights baked into the image above, not on the volume.
+ENV REELEEL_CV_MODEL=/app/models/yolox-tiny.onnx
 
 WORKDIR /app
 

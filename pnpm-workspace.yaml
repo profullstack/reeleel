@@ -9,3 +9,6 @@ packages:
 
 allowBuilds:
   esbuild: true
+  # Its postinstall fetches the native onnxruntime binaries; without it the
+  # detector cannot load a model.
+  onnxruntime-node: true

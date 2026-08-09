@@ -10,13 +10,32 @@ not a failure.
 
 ## Status
 
-Not implemented yet. This directory defines the **contract** so the TypeScript
-side can be built, tested and shipped against a stable interface (PRD phase 3).
+**Implemented — see [`apps/cv-worker`](../../apps/cv-worker).**
+
+The shipped worker is TypeScript on onnxruntime-node, not Python. The protocol
+below is unchanged and language-agnostic, so a Python worker can replace it by
+setting `REELEEL_CV_WORKER`; this directory keeps the contract and the Python
+skeleton for that.
+
+Why TypeScript for the reference implementation:
+
+- It runs in the same Node runtime the rest of the app already needs, so the
+  container gains ~15 MB of native onnxruntime rather than Python plus torch,
+  opencv and numpy wheels.
+- Frames come from FFmpeg, which is already a hard dependency, instead of
+  OpenCV.
+- It is testable in the same suite as everything else.
+
+Training tools remain Python's job (PRD phase 8) — that is where PyTorch
+genuinely earns its place.
 
 ## Install
 
+Nothing to install: it is built with the workspace. Fetch the weights once.
+
 ```bash
-pip install -e workers/cv
+pnpm build
+node apps/cv-worker/dist/index.js fetch-model --sport soccer
 ```
 
 Or point ReelEel at any executable that speaks the protocol below:
@@ -27,9 +46,25 @@ export REELEEL_CV_WORKER=/path/to/my-worker
 
 Resolution order used by `@reeleel/core`:
 
-1. `$REELEEL_CV_WORKER`
+1. `$REELEEL_CV_WORKER` (a `.js` path is run with the current Node binary)
 2. `reeleel-cv` on `$PATH`
-3. `workers/cv/reeleel_cv/__main__.py` run through `$REELEEL_PYTHON` (default `python3`)
+3. `apps/cv-worker/dist/index.js`, located relative to the core module
+4. `workers/cv/reeleel_cv/__main__.py` through `$REELEEL_PYTHON`
+
+## What it can and cannot detect
+
+The default model is **YOLOX-Tiny trained on COCO** (Apache-2.0, framework and
+weights). COCO knows `person` and `sports ball`, which map to **player** and
+**ball**.
+
+It does **not** produce `referee`, `goalkeeper` or `goal`. COCO has no such
+classes, and every person on a pitch looks identical to it. Guessing a role from
+a person box would be inventing data, so the worker reports those classes as
+unsupported instead. Moment scoring already tolerates missing signals — rules
+like `toward_goal` simply never fire until a sport-specific model exists.
+
+Training that model is PRD phase 8, and the annotation and dataset-export
+machinery for it already ships.
 
 ## Protocol
 

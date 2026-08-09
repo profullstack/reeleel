@@ -66,7 +66,13 @@ export const runChecks = async (): Promise<Check[]> => {
           detail: 'not installed',
           hint: 'Detection and tracking are unavailable. Import, review, trim and export still work.',
         }
-      : { name: 'CV worker', status: 'ok', detail: `${worker.command} (${worker.kind})` },
+      : {
+          name: 'CV worker',
+          status: 'ok',
+          // For a node worker the interesting path is the script, not the
+          // interpreter that happens to be running it.
+          detail: `${worker.args[0] ?? worker.command} (${worker.kind})`,
+        },
   );
 
   const config = loadConfig();
