@@ -317,6 +317,12 @@ export const registerActions = (app: Hono): void => {
         root,
         record,
         exists: (target) => existsSync(target),
+        // This is the no-JavaScript path, where the collision is found ~30 kB
+        // into a body that may still have 200 MB to go. Rejecting there answers
+        // a request the browser has not finished sending, and the browser
+        // discards the response — the user gets a protocol error instead of the
+        // reason. Taking a free name lets the import succeed instead.
+        onCollision: 'rename',
       });
 
       if (received.savedPath !== null) {
@@ -330,7 +336,16 @@ export const registerActions = (app: Hono): void => {
           throw error;
         }
         finishUpload(record);
-        return uploadOk(c, to, 'Footage imported', record);
+        // Say so when the name had to change, rather than leaving the user to
+        // wonder why the file in the list is not the one they picked.
+        const stored = received.file?.filename;
+        const renamed = stored !== undefined && record.fileName !== null && record.fileName !== stored;
+        return uploadOk(
+          c,
+          to,
+          renamed ? `Footage imported as ${record.fileName} — that name was already taken` : 'Footage imported',
+          record,
+        );
       }
 
       // No file part — the user filled in the server-path field instead.
