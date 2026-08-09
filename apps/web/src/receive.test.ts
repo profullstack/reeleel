@@ -6,7 +6,7 @@ import path from 'node:path';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { UploadError, receiveVideoUpload, safeFileName } from './receive.js';
+import { UploadError, findFreeName, receiveVideoUpload, safeFileName } from './receive.js';
 import { beginUpload, resetUploads } from './uploads.js';
 import type { ReceiveResult } from './receive.js';
 import type { UploadRecord } from './uploads.js';
@@ -40,7 +40,12 @@ interface Attempt {
  */
 const post = async (
   parts: Array<{ name: string; value: Buffer | string; filename?: string }>,
-  options: { chunkSize?: number; stallAfterBytes?: number; truncate?: number } = {},
+  options: {
+    chunkSize?: number;
+    stallAfterBytes?: number;
+    truncate?: number;
+    onCollision?: 'reject' | 'rename';
+  } = {},
 ): Promise<Attempt> => {
   const pieces: Buffer[] = [];
   for (const part of parts) {
@@ -92,6 +97,7 @@ const post = async (
         root,
         record,
         exists: (target) => existsSync(target),
+        ...(options.onCollision === undefined ? {} : { onCollision: options.onCollision }),
       });
     } catch (error) {
       attempt.error = error;
@@ -230,6 +236,35 @@ describe('receiveVideoUpload', () => {
     expect(error).toBeInstanceOf(UploadError);
     expect(['UPLOAD_ABORTED', 'MULTIPART_MALFORMED']).toContain((error as UploadError).code);
     expect(sourceFiles()).toEqual([]);
+  });
+
+  /**
+   * The production failure this behaviour exists for: a duplicate name found
+   * ~30 kB into a 189 MB body. Rejecting there answers a request the browser is
+   * still sending, and the browser discards the response — the user saw
+   * ERR_HTTP2_PROTOCOL_ERROR rather than the reason. Renaming lets it succeed.
+   */
+  it('takes a free name instead of rejecting a duplicate, when asked to', async () => {
+    await post([{ name: 'file', value: Buffer.from('original'), filename: 'game.mp4' }]);
+
+    const { result, error, record } = await post(
+      [{ name: 'file', value: Buffer.from('the second one'), filename: 'game.mp4' }],
+      { onCollision: 'rename' },
+    );
+
+    expect(error).toBeUndefined();
+    expect(record.fileName).toBe('game-2.mp4');
+    expect(result?.savedPath).toBe(path.join(sourceDir(), 'game-2.mp4'));
+    // Both files survive, and the original is untouched.
+    expect(sourceFiles().sort()).toEqual(['game-2.mp4', 'game.mp4']);
+    expect(readFileSync(path.join(sourceDir(), 'game.mp4')).toString()).toBe('original');
+    expect(readFileSync(path.join(sourceDir(), 'game-2.mp4')).toString()).toBe('the second one');
+  });
+
+  it('keeps counting up when several names are taken', async () => {
+    const taken = new Set(['/d/game.mp4', '/d/game-2.mp4', '/d/game-3.mp4']);
+    expect(findFreeName('/d', 'game.mp4', (candidate) => taken.has(candidate))).toBe('game-4.mp4');
+    expect(findFreeName('/d', 'other.mp4', (candidate) => taken.has(candidate))).toBe('other-2.mp4');
   });
 
   it('refuses a request that is not multipart', async () => {

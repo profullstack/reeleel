@@ -140,9 +140,45 @@ export interface ReceiveResult {
 export interface ReceiveOptions {
   root: string;
   record: UploadRecord;
-  /** Rejects a name that is already imported, before any bytes are read. */
+  /** Reports whether a destination is already taken. */
   exists?: (target: string) => boolean;
+  /**
+   * What to do when the name is already imported.
+   *
+   * `reject` is right for the JSON API, which asks before it sends anything.
+   * `rename` is right for the no-JavaScript form, where rejecting means
+   * answering a request whose body is still arriving — see the note on
+   * {@link findFreeName}.
+   */
+  onCollision?: 'reject' | 'rename';
 }
+
+/**
+ * Picks `game-2.mp4` when `game.mp4` is taken.
+ *
+ * This exists because of a protocol detail with real consequences. The
+ * collision is detected from the part headers, ~30 kB into a request whose
+ * body may be 200 MB. Answering then means responding while the client is
+ * still uploading, and a browser that has not finished sending a body will
+ * usually not surface the response at all — Chrome reports
+ * ERR_HTTP2_PROTOCOL_ERROR and the user sees "this site can't be reached"
+ * instead of "that file is already imported". Choosing a free name lets the
+ * upload succeed instead of failing invisibly.
+ */
+export const findFreeName = (
+  dir: string,
+  name: string,
+  taken: (candidate: string) => boolean,
+): string => {
+  const extension = path.extname(name);
+  const stem = name.slice(0, name.length - extension.length);
+  for (let n = 2; n < 1000; n += 1) {
+    const candidate = `${stem}-${n}${extension}`;
+    if (!taken(path.join(dir, candidate))) return candidate;
+  }
+  // A thousand copies of one name is not a case worth designing around.
+  return `${stem}-${Date.now()}${extension}`;
+};
 
 /**
  * Streams a multipart upload into the project's `source/` directory.
@@ -197,13 +233,18 @@ export const receiveVideoUpload = async (
       );
     }
 
-    const candidate = path.join(dir, name);
-    if (options.exists?.(candidate) === true) {
-      throw new UploadError('CONFLICT', 'A file with that name is already imported.', {
-        hint: 'Rename the file, or remove the existing one first.',
-        status: 409,
-      });
+    const taken = options.exists ?? (() => false);
+    let chosen = name;
+    if (taken(path.join(dir, name))) {
+      if (options.onCollision !== 'rename') {
+        throw new UploadError('CONFLICT', 'A file with that name is already imported.', {
+          hint: 'Rename the file, or remove the existing one first.',
+          status: 409,
+        });
+      }
+      chosen = findFreeName(dir, name, taken);
     }
+    const candidate = path.join(dir, chosen);
 
     await assertRoomFor(dir, record.bytesExpected);
 
@@ -211,7 +252,7 @@ export const receiveVideoUpload = async (
     // own source/ directory and is referenced from there.
     mkdirSync(dir, { recursive: true });
 
-    nameUpload(record, name);
+    nameUpload(record, chosen);
     target = candidate;
     // Written under a scratch name so a crash mid-upload cannot leave
     // something that looks like a complete import.
