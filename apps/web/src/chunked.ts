@@ -196,6 +196,14 @@ export const findSession = async (
   } catch {
     throw new UploadError('NOT_FOUND', 'No such upload.', { status: 404 });
   }
+  if (
+    sidecar.id !== safe ||
+    typeof sidecar.fileName !== 'string' ||
+    safeFileName(sidecar.fileName) !== sidecar.fileName ||
+    !isSupportedExtension(sidecar.fileName)
+  ) {
+    throw new UploadError('NOT_FOUND', 'No such upload.', { status: 404 });
+  }
   if (sidecar.ownerId !== null && sidecar.ownerId !== (ownerId ?? null)) {
     throw new UploadError('NOT_FOUND', 'No such upload.', { status: 404 });
   }

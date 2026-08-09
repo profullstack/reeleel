@@ -349,4 +349,14 @@ describe('housekeeping', () => {
 
     await expect(findSession(root, record.id, undefined)).rejects.toMatchObject({ status: 404 });
   });
+
+  it('rejects a persisted upload destination outside the source directory', async () => {
+    const record = await start('game.mp4', 1024);
+    const sidecar = path.join(sourceDir(), `.reeleel-upload-${record.id}.json`);
+    const saved = JSON.parse(readFileSync(sidecar, 'utf8')) as Record<string, unknown>;
+    await writeFile(sidecar, JSON.stringify({ ...saved, fileName: '../../outside.mp4' }), 'utf8');
+    resetUploads();
+
+    await expect(findSession(root, record.id, undefined)).rejects.toMatchObject({ status: 404 });
+  });
 });
