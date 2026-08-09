@@ -46,6 +46,9 @@ import {
 import type { AuthUser } from '@reeleel/api';
 import {
   isReelEelError,
+  listAthletes,
+  listClips,
+  listJobs,
   listMoments,
   listProjects,
   listVideos,
@@ -55,8 +58,11 @@ import {
   worstStatus,
 } from '@reeleel/core';
 
+import { registerActions } from './actions.js';
 import { ForgotPage, LoginPage, MessagePage, RegisterPage, ResetPage, VerifyNoticePage } from './views/auth.js';
 import { DoctorPage, ErrorPage, ProjectPage, ProjectsPage } from './views/pages.js';
+import type { Flash } from './views/pages.js';
+import { ICON_SVG, MANIFEST, SERVICE_WORKER } from './pwa.js';
 
 const publicDir = path.join(fileURLToPath(new URL('../', import.meta.url)), 'public');
 
@@ -111,6 +117,27 @@ export const createWebApp = (): Hono => {
   );
 
   // ── Sign in ───────────────────────────────────────────────────────────────
+
+  // ── Installable app shell (public: needed before sign-in) ─────────────────
+
+  app.get('/manifest.webmanifest', (c) =>
+    c.json(MANIFEST, 200, { 'cache-control': 'public, max-age=3600' }),
+  );
+
+  app.get('/icon.svg', (c) =>
+    c.body(ICON_SVG, 200, {
+      'content-type': 'image/svg+xml',
+      'cache-control': 'public, max-age=86400',
+    }),
+  );
+
+  app.get('/sw.js', (c) =>
+    c.body(SERVICE_WORKER, 200, {
+      'content-type': 'text/javascript',
+      // A cached service worker is how an app gets stuck on an old version.
+      'cache-control': 'no-cache',
+    }),
+  );
 
   app.get('/login', async (c) => {
     if ((await resolveUserFromRequest(c)) !== null) return c.redirect('/');
@@ -356,9 +383,17 @@ export const createWebApp = (): Hono => {
     }),
   );
 
+  registerActions(app);
+
+  /** `?ok=` / `?err=` set by a redirect after a form post. */
+  const flashOf = (c: Context): Flash => ({
+    ok: c.req.query('ok'),
+    err: c.req.query('err'),
+  });
+
   app.get('/', async (c) => {
     try {
-      return c.html(<ProjectsPage projects={await listProjects(scopeFor(c))} />);
+      return c.html(<ProjectsPage projects={await listProjects(scopeFor(c))} flash={flashOf(c)} />);
     } catch (error) {
       return c.html(<ErrorPage message={String(error)} />, 500);
     }
@@ -375,12 +410,25 @@ export const createWebApp = (): Hono => {
       if (ref === undefined) return c.html(<ErrorPage message="No project given." />, 400);
 
       const root = await resolveProjectRoot(decodeURIComponent(ref), scopeFor(c));
-      const [project, videos, moments] = await Promise.all([
+      const [project, videos, athletes, moments, clips, jobs] = await Promise.all([
         summarizeProject(root),
         listVideos(root),
+        listAthletes(root),
         listMoments(root),
+        listClips(root),
+        listJobs(root, { limit: 10 }),
       ]);
-      return c.html(<ProjectPage project={project} videos={videos} moments={moments} />);
+      return c.html(
+        <ProjectPage
+          project={project}
+          videos={videos}
+          athletes={athletes}
+          moments={moments}
+          clips={clips}
+          jobs={jobs}
+          flash={flashOf(c)}
+        />,
+      );
     } catch (error) {
       if (isReelEelError(error)) {
         return c.html(<ErrorPage message={error.message} hint={error.hint} />, 404);

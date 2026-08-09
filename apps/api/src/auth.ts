@@ -209,6 +209,11 @@ export const PUBLIC_PATHS = new Set([
   '/forgot',
   '/reset',
   '/client.js',
+  // Installable-app assets. A browser fetches these before anyone signs in,
+  // and none of them disclose anything.
+  '/manifest.webmanifest',
+  '/sw.js',
+  '/icon.svg',
 ]);
 
 export const isPublicPath = (path: string): boolean => PUBLIC_PATHS.has(path);

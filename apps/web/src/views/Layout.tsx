@@ -80,10 +80,23 @@ export const Layout: FC<PropsWithChildren<{ title: string }>> = ({ title, childr
   <html lang="en">
     <head>
       <meta charset="utf-8" />
-      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      {/* viewport-fit=cover so the app respects a notch when installed. */}
+      <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
       <title>{title} · ReelEel</title>
+      <link rel="manifest" href="/manifest.webmanifest" />
+      <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+      <link rel="apple-touch-icon" href="/icon.svg" />
+      <meta name="theme-color" content="#0f766e" />
+      <meta name="apple-mobile-web-app-capable" content="yes" />
+      <meta name="apple-mobile-web-app-title" content="ReelEel" />
       <style dangerouslySetInnerHTML={{ __html: STYLES }} />
       <script type="module" src="/client.js" defer />
+      <script
+        dangerouslySetInnerHTML={{
+          __html:
+            "if('serviceWorker' in navigator){addEventListener('load',function(){navigator.serviceWorker.register('/sw.js').catch(function(){})})}",
+        }}
+      />
     </head>
     <body>
       <header>
