@@ -36,8 +36,16 @@ import {
   resolveUserFromRequest,
   scopeFor,
 } from './accounts.js';
-import { currentUser, readAuthConfig, requireAuth } from './auth.js';
+import {
+  clientKey,
+  currentUser,
+  loginAttemptAllowed,
+  readAuthConfig,
+  requireAuth,
+  resetLoginAttempts,
+} from './auth.js';
 import type { AuthConfig } from './auth.js';
+import { createUserSession, verifyLogin } from './users.js';
 import { errorResponse, handle } from './errors.js';
 
 // The web app shares this implementation rather than reimplementing it.
@@ -83,6 +91,34 @@ export const createApp = (options: CreateAppOptions = {}): Hono => {
   );
 
   app.get('/api/health', (c) => c.json({ ok: true, service: 'reeleel-api', version: '0.1.0' }));
+
+  /**
+   * Token login for native clients, which have no cookie jar. Returns the same
+   * session secret the browser stores in a cookie, so revocation and expiry
+   * behave identically across surfaces.
+   */
+  app.post('/api/login', async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { email?: string; password?: string };
+    if (typeof body.email !== 'string' || typeof body.password !== 'string') {
+      return c.json({ ok: false, code: 'INVALID_INPUT', error: 'Email and password are required.' }, 400);
+    }
+    if (!loginAttemptAllowed(`api:${clientKey(c)}`)) {
+      return c.json({ ok: false, code: 'RATE_LIMITED', error: 'Too many attempts.' }, 429);
+    }
+
+    const user = await verifyLogin(body.email, body.password);
+    if (user === null) {
+      // Same message for both failure modes, as on the web form.
+      return c.json({ ok: false, code: 'UNAUTHORIZED', error: 'Those details do not match an account.' }, 401);
+    }
+
+    resetLoginAttempts(`api:${clientKey(c)}`);
+    return c.json({
+      ok: true,
+      token: await createUserSession(user.id),
+      user: { id: user.id, email: user.email, emailVerified: user.emailVerifiedAt !== null },
+    });
+  });
 
   app.get('/api/me', (c) => {
     const user = currentUser(c);

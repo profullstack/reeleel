@@ -9,6 +9,9 @@ export default tseslint.config(
       '**/coverage/**',
       'apps/web/public/**',
       'workers/**',
+      // Outside the pnpm workspace with its own React Native toolchain and
+      // lint rules; linting it from here only produces false positives.
+      'apps/mobile/**',
     ],
   },
   js.configs.recommended,

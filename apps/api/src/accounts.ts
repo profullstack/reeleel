@@ -2,19 +2,30 @@ import type { Context } from 'hono';
 
 import type { ProjectScope } from '@reeleel/core';
 
-import { getActor, readUserCookie } from './auth.js';
+import { getActor, presentedToken, readUserCookie } from './auth.js';
 import type { AuthUser } from './auth.js';
 import { readEmailConfig } from './email.js';
 import { userForSession } from './users.js';
 
-/** Resolves the signed-in account from the session cookie, if there is one. */
+/**
+ * Resolves the signed-in account from a session cookie or a bearer token.
+ *
+ * Native apps cannot rely on cookies the way a browser does, so the same
+ * session secret is accepted in the Authorization header. It is the identical
+ * credential either way — one session store, one revocation path.
+ */
 export const resolveUserFromRequest = async (c: Context): Promise<AuthUser | null> => {
-  const secret = readUserCookie(c);
-  if (secret === null) return null;
+  const candidates = [readUserCookie(c), presentedToken(c)].filter(
+    (value): value is string => value !== null && value.length > 0,
+  );
 
-  const user = await userForSession(secret);
-  if (user === null) return null;
-  return { id: user.id, email: user.email, emailVerifiedAt: user.emailVerifiedAt };
+  for (const secret of candidates) {
+    const user = await userForSession(secret);
+    if (user !== null) {
+      return { id: user.id, email: user.email, emailVerifiedAt: user.emailVerifiedAt };
+    }
+  }
+  return null;
 };
 
 /**

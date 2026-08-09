@@ -214,6 +214,8 @@ export const PUBLIC_PATHS = new Set([
   '/manifest.webmanifest',
   '/sw.js',
   '/icon.svg',
+  // Token login for native clients — necessarily reachable before auth.
+  '/api/login',
 ]);
 
 export const isPublicPath = (path: string): boolean => PUBLIC_PATHS.has(path);

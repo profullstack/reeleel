@@ -6,6 +6,11 @@ packages:
   - apps/*
   - packages/*
   - tools/*
+  # apps/mobile is deliberately excluded: React Native pulls a large,
+  # platform-specific dependency tree that the server image must never install,
+  # and the Dockerfile copies workspace manifests explicitly. It keeps its own
+  # lockfile and consumes @reeleel/client through a file: dependency.
+  - '!apps/mobile'
 
 allowBuilds:
   esbuild: true

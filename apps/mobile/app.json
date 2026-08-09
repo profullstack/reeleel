@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "ReelEel",
+    "slug": "reeleel",
+    "version": "0.1.0",
+    "orientation": "default",
+    "scheme": "reeleel",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#0f1115"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.profullstack.reeleel"
+    },
+    "android": {
+      "package": "com.profullstack.reeleel",
+      "adaptiveIcon": {
+        "backgroundColor": "#0f766e"
+      }
+    },
+    "extra": {
+      "eas": {
+        "projectId": ""
+      }
+    }
+  }
+}

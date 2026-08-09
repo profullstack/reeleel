@@ -1,0 +1,26 @@
+{
+  "name": "@reeleel/client",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Typed HTTP client for the ReelEel API. Runtime-agnostic: React Native, browsers, Node.",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "src"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --root ."
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.17"
+  }
+}
