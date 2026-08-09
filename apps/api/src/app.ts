@@ -30,7 +30,12 @@ import {
   worstStatus,
 } from '@reeleel/core';
 
+import { readAuthConfig, requireAuth } from './auth.js';
+import type { AuthConfig } from './auth.js';
 import { errorResponse, handle } from './errors.js';
+
+// The web app shares this auth implementation rather than reimplementing it.
+export * from './auth.js';
 
 /**
  * The API is a thin shell over @reeleel/core — deliberately. Any logic that
@@ -41,11 +46,24 @@ import { errorResponse, handle } from './errors.js';
  * Note there is no upload endpoint: footage is referenced from the local
  * filesystem and never posted anywhere.
  */
-export const createApp = (): Hono => {
+export interface CreateAppOptions {
+  /** Injectable for tests; defaults to reading the environment. */
+  auth?: AuthConfig;
+}
+
+export const createApp = (options: CreateAppOptions = {}): Hono => {
   const app = new Hono();
+  const auth = options.auth ?? readAuthConfig();
 
   // The web app is same-origin in production; CORS is for local split-port dev.
+  // Credentials are never reflected, so a cookie cannot be replayed cross-origin.
   app.use('/api/*', cors({ origin: (origin) => origin ?? '*' }));
+
+  // Scoped to /api/* rather than '*' so that when the web app mounts this, a
+  // page request falls through to the web app's own guard and gets redirected
+  // to the login form instead of a JSON 401. Public paths (/api/health) are
+  // still exempted inside the middleware.
+  app.use('/api/*', requireAuth({ config: auth }));
 
   app.get('/api/health', (c) => c.json({ ok: true, service: 'reeleel-api', version: '0.1.0' }));
 

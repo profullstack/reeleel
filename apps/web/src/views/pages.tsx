@@ -156,6 +156,45 @@ export const DoctorPage: FC<{ checks: Check[]; status: string }> = ({ checks, st
   </Layout>
 );
 
+export const LoginPage: FC<{ error?: string | undefined; next?: string | undefined }> = ({
+  error,
+  next,
+}) => (
+  <Layout title="Sign in">
+    <h1>Sign in</h1>
+    <p class="muted">
+      This ReelEel instance is protected. Enter its access token to continue.
+    </p>
+    {error === undefined ? null : (
+      <p class="pill reject" role="alert">
+        {error}
+      </p>
+    )}
+    <form method="post" action="/login" class="card">
+      <input type="hidden" name="next" value={next ?? '/'} />
+      <div class="row">
+        <label for="token" class="muted">
+          Access token
+        </label>
+        <input
+          id="token"
+          name="token"
+          type="password"
+          autocomplete="current-password"
+          required
+          class="grow"
+          style="font: inherit; padding: .4rem .6rem; border-radius: .4rem; border: 1px solid var(--line); background: var(--bg); color: inherit;"
+        />
+        <button type="submit">Sign in</button>
+      </div>
+    </form>
+    <p class="muted">
+      The token is the <code>REELEEL_AUTH_TOKEN</code> this server was started with. Running
+      ReelEel on your own machine needs no token at all.
+    </p>
+  </Layout>
+);
+
 export const ErrorPage: FC<{ message: string; hint?: string | undefined }> = ({ message, hint }) => (
   <Layout title="Error">
     <h1>Something went wrong</h1>

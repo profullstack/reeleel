@@ -1,10 +1,23 @@
 import { serve } from '@hono/node-server';
 
+import { AuthConfigError, assertAuthConfigured, isAuthEnabled } from '@reeleel/api';
+
 import { clientBundleExists, createWebApp } from './server.js';
 
 const port = Number(process.env['PORT'] ?? 8788);
 // Loopback by default — this app can read local project directories.
 const hostname = process.env['HOST'] ?? '127.0.0.1';
+
+// Fail closed: never listen on a public interface without a token.
+try {
+  assertAuthConfigured(hostname);
+} catch (error) {
+  if (error instanceof AuthConfigError) {
+    process.stderr.write(`${error.message}\n`);
+    process.exit(1);
+  }
+  throw error;
+}
 
 if (!clientBundleExists()) {
   process.stderr.write(
@@ -14,5 +27,6 @@ if (!clientBundleExists()) {
 }
 
 serve({ fetch: createWebApp().fetch, port, hostname }, (info) => {
-  process.stdout.write(`ReelEel web listening on http://${hostname}:${info.port}\n`);
+  const mode = isAuthEnabled() ? 'token auth enabled' : 'no auth (loopback only)';
+  process.stdout.write(`ReelEel web listening on http://${hostname}:${info.port} — ${mode}\n`);
 });

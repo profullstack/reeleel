@@ -307,6 +307,8 @@ Useful keys:
 | `REELEEL_HOME` | Override config/data/cache root (tests, portable installs, containers) |
 | `REELEEL_PROJECTS_DIR` | Where `project create` puts new projects (default `~/ReelEel`) |
 | `REELEEL_FFMPEG`, `REELEEL_FFPROBE` | Explicit binary paths |
+| `REELEEL_AUTH_TOKEN` | Protects the API/web app. Unset = local, no login. Required to bind publicly |
+| `REELEEL_SESSION_SECONDS` | Browser session lifetime (default 7 days) |
 | `REELEEL_DB_URL`, `REELEEL_DB_AUTH_TOKEN` | Turso for the machine-wide registry |
 | `REELEEL_DB_REPLICA_PATH`, `REELEEL_DB_SYNC_INTERVAL` | Embedded replica tuning |
 | `REELEEL_CV_WORKER`, `REELEEL_PYTHON` | Locate the CV worker |

@@ -1,6 +1,8 @@
 /** @jsxImportSource hono/jsx */
 import type { FC, PropsWithChildren } from 'hono/jsx';
 
+import { isAuthEnabled } from '@reeleel/api';
+
 /**
  * One stylesheet, inline, no CDN. The desktop app runs offline by design and
  * the web app should not be the one thing that needs a network to look right.
@@ -74,6 +76,9 @@ export const Layout: FC<PropsWithChildren<{ title: string }>> = ({ title, childr
         <nav>
           <a href="/">Projects</a>
           <a href="/doctor">Doctor</a>
+          {/* Only meaningful when a token is configured; a local instance has
+              no session to end. */}
+          {isAuthEnabled() ? <a href="/logout">Sign out</a> : null}
         </nav>
       </header>
       <main>{children}</main>

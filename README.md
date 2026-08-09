@@ -181,15 +181,44 @@ Notes on the image:
   there, so they survive a redeploy. Without a mounted volume the container
   filesystem is ephemeral and everything resets.
 
-Two things to settle before pointing a public URL at it:
+**Persistence.** Mount a volume at `/data`, and set `REELEEL_DB_URL` /
+`REELEEL_DB_AUTH_TOKEN` so the machine registry lives in Turso rather than on
+the container disk.
 
-- **Persistence.** Mount a volume at `/data`, and consider setting
-  `REELEEL_DB_URL` / `REELEEL_DB_AUTH_TOKEN` so the machine registry lives in
-  Turso rather than on the container disk.
-- **There is no authentication.** The API can list, modify and delete any
-  project the server can see. That is the right trade for something running on
-  your own machine and the wrong one for the open internet. Put it behind auth
-  or a private network before it holds anything real.
+## Authentication
+
+The rule is about *exposure*, not about having accounts — the PRD is explicit
+that local desktop use requires no account, and that stays true:
+
+| Situation | Behaviour |
+| --- | --- |
+| `REELEEL_AUTH_TOKEN` unset, bound to loopback | **Open.** You are running it on your own machine. |
+| `REELEEL_AUTH_TOKEN` set | Every route needs it. |
+| `REELEEL_AUTH_TOKEN` unset, bound publicly | **Refuses to start.** |
+
+That last row is the point. A server that can read, modify and delete project
+directories should fail loudly rather than quietly serve itself to the internet.
+
+Generate a token and set it:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+```
+
+Browsers sign in at `/login` and get an HttpOnly, SameSite=Lax session cookie
+signed with HMAC-SHA256 — the token itself is never stored in the cookie. Login
+attempts are throttled. Scripts skip the form:
+
+```bash
+curl -H "Authorization: Bearer $REELEEL_AUTH_TOKEN" https://your-host/api/projects
+```
+
+`Authorization: Bearer`, `X-ReelEel-Token` and `?token=` all work. `/api/health`
+stays public so platform healthchecks pass; it discloses nothing but a version
+string.
+
+The CLI and desktop app talk to `@reeleel/core` directly and are never affected
+by any of this.
 
 ## Privacy and youth safety
 
