@@ -177,10 +177,21 @@ export const removeAthlete = async (root: string, reference: string): Promise<At
   return athlete;
 };
 
+/**
+ * How a person refers to their own child at a game: "#14 in white".
+ *
+ * The number alone is ambiguous — both teams have a 14, and on a school court
+ * they are frequently on screen together. `jersey_color` has existed on the
+ * athlete row since the first migration and nothing has ever written or shown
+ * it, so the picker could only offer names, which is the one thing a detector
+ * cannot help you match against.
+ */
 export const describeAthlete = (athlete: Athlete): string => {
   const parts: string[] = [];
   if (athlete.name !== null) parts.push(athlete.name);
   if (athlete.jerseyNumber !== null) parts.push(`#${athlete.jerseyNumber}`);
+  // Colour before team: it is what you can actually see in the footage.
+  if (athlete.jerseyColor !== null) parts.push(`in ${athlete.jerseyColor}`);
   if (athlete.team !== null) parts.push(`(${athlete.team})`);
   return parts.length > 0 ? parts.join(' ') : athlete.id;
 };
