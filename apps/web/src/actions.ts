@@ -1,4 +1,4 @@
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
@@ -270,15 +270,26 @@ const startAnalysis = (
  * A failure would have been even quieter: the reason went to the server's
  * stderr and nowhere else.
  */
-const startRender = (root: string, name: string, aspect: AspectRatio): void => {
+const startRender = (
+  root: string,
+  name: string,
+  aspect: AspectRatio,
+  polish: { musicPath?: string; musicVolume?: number; fadeSeconds?: number } = {},
+): void => {
   void (async () => {
-    const job = await createJob(root, 'render', { name, aspect });
+    const job = await createJob(root, 'render', { name, aspect, ...polish });
     try {
       await updateJob(root, job.id, { status: 'running', stage: 'render', progress: 0.05 });
-      await logJob(root, job.id, `rendering "${name}" at ${aspect}`);
+      await logJob(
+        root,
+        job.id,
+        `rendering "${name}" at ${aspect}` +
+          (polish.musicPath === undefined ? '' : ` with ${path.basename(polish.musicPath)} underneath`),
+      );
 
       const result = await renderReel(root, name, {
         aspect,
+        ...polish,
         onProgress: (message) => {
           void logJob(root, job.id, message);
         },
@@ -831,6 +842,43 @@ export const registerActions = (app: Hono): void => {
     }
   });
 
+  /**
+   * Uploads a music bed. Small files, so a plain form post is fine — this is
+   * not the multi-hundred-megabyte path the video uploader exists for.
+   */
+  app.post('/projects/:ref/music', async (c) => {
+    const bad = await guard(c);
+    if (bad !== null) return bad;
+    const ref = c.req.param('ref') ?? '';
+    const to = `/projects/${encodeURIComponent(ref)}`;
+
+    try {
+      const root = await rootOf(c);
+      const body = await c.req.parseBody();
+      const file = body['music'];
+      if (!(file instanceof File) || file.size === 0) {
+        return back(c, to, undefined, 'Choose an audio file first.');
+      }
+      if (file.size > 50 * 1024 * 1024) {
+        return back(c, to, undefined, 'That is over 50MB — a music bed should be far smaller.');
+      }
+
+      // The name is the client's; the directory is ours. basename keeps a
+      // crafted "../../" out of the project.
+      const safe = path.basename(file.name).replace(/[^\w.\- ]+/g, '_');
+      if (!/\.(mp3|m4a|aac|wav|ogg|flac)$/i.test(safe)) {
+        return back(c, to, undefined, 'That does not look like an audio file.');
+      }
+
+      const dir = projectDir(root, 'music');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, safe), Buffer.from(await file.arrayBuffer()));
+      return back(c, to, `${safe} added — pick it when you export`);
+    } catch (error) {
+      return back(c, to, undefined, failed(error));
+    }
+  });
+
   /** Removes one export. Older versions are kept, so this has to be possible. */
   app.post('/projects/:ref/exports/:id/delete', async (c) => {
     const bad = await guard(c);
@@ -1261,7 +1309,28 @@ export const registerActions = (app: Hono): void => {
       } catch {
         // Already exists — reuse it.
       }
-      startRender(root, name, aspect);
+      /**
+       * Music is optional and remembered per project: it lives in the project
+       * directory, so re-rendering does not mean re-uploading it.
+       */
+      const musicDir = projectDir(root, 'music');
+      const chosen = field(body, 'music');
+      const musicPath =
+        chosen.length === 0 || chosen === 'none'
+          ? undefined
+          : path.join(musicDir, path.basename(chosen));
+      if (musicPath !== undefined && !existsSync(musicPath)) {
+        return back(c, to, undefined, 'That music file is no longer there.');
+      }
+
+      const volume = Number(field(body, 'musicVolume'));
+      const fade = Number(field(body, 'fadeSeconds'));
+
+      startRender(root, name, aspect, {
+        ...(musicPath === undefined ? {} : { musicPath }),
+        ...(Number.isFinite(volume) && volume >= 0 && volume <= 1 ? { musicVolume: volume } : {}),
+        ...(Number.isFinite(fade) && fade >= 0 && fade <= 3 ? { fadeSeconds: fade } : {}),
+      });
 
       return back(c, to, 'Rendering — progress appears in the job log, then under Exports');
     } catch (error) {

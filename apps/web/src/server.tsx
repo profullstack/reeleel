@@ -1,5 +1,5 @@
 /** @jsxImportSource hono/jsx */
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -54,6 +54,7 @@ import {
   listProjects,
   listSports,
   listVideos,
+  projectDir,
   newId,
   resolveProjectRoot,
   runChecks,
@@ -428,8 +429,17 @@ export const createWebApp = (): Hono => {
         listJobs(root, { limit: 10 }),
         listExports(root),
       ]);
+      /**
+       * Uploaded music, read from the directory rather than a table: the file
+       * on disk is the record, so nothing can drift out of sync with it.
+       */
+      const musicDir = projectDir(root, 'music');
+      const music = existsSync(musicDir)
+        ? readdirSync(musicDir).filter((name) => /\.(mp3|m4a|aac|wav|ogg|flac)$/i.test(name)).sort()
+        : [];
       return c.html(
         <ProjectPage
+          music={music}
           project={project}
           videos={videos}
           athletes={athletes}
