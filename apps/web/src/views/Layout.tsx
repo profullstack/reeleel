@@ -37,6 +37,9 @@ const STYLES = `
   h1 { font-size: 1.4rem; margin: 0 0 .25rem; }
   h2 { font-size: 1.05rem; margin: 2rem 0 .75rem; }
   .muted { color: var(--muted); }
+  /* Advice that only applies without JavaScript — telling someone to refresh
+     is actively wrong once the page updates itself. */
+  html.js .no-js-only { display: none; }
   .card {
     border: 1px solid var(--line); border-radius: .6rem;
     padding: .9rem 1rem; margin-bottom: .6rem; background: var(--card);

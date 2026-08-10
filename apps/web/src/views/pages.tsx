@@ -156,6 +156,8 @@ export const ProjectPage: FC<ProjectView> = ({
       <Notice flash={flash} />
 
       <h2>Footage</h2>
+      {/* The uploader below posts into this list; swapped rather than reloaded. */}
+      <div data-live="videos">
       {videos.length === 0 ? (
         <p class="empty">Nothing imported yet.</p>
       ) : (
@@ -190,6 +192,8 @@ export const ProjectPage: FC<ProjectView> = ({
           </tbody>
         </table>
       )}
+
+      </div>
 
       <details class="card" open={videos.length === 0}>
         <summary>Import footage</summary>
@@ -226,6 +230,10 @@ export const ProjectPage: FC<ProjectView> = ({
       </details>
 
       <h2>Athlete to follow</h2>
+      {/* Swapped in place when anything changes it — see client/live.ts. The
+          identify grid below is deliberately outside: it holds a selection the
+          user is part-way through making. */}
+      <div data-live="athletes">
       {athletes.length === 0 ? (
         <p class="empty">Nobody yet. Analysis needs someone to follow.</p>
       ) : (
@@ -288,6 +296,7 @@ export const ProjectPage: FC<ProjectView> = ({
           <button type="submit">Add athlete</button>
         </form>
       </details>
+      </div>
 
       {/* The one irreducibly manual step: a detector cannot know which player
           is yours. Until an athlete is bound to a track, scoring has no focal
@@ -416,14 +425,19 @@ export const ProjectPage: FC<ProjectView> = ({
             </tbody>
           </table>
         )}
+        {/* The no-JavaScript fallback only. With the bundle loaded the job log
+            below streams progress and the page updates itself, so telling a
+            user to refresh — the thing that loses their place and races their
+            clicks — would be advice to make it worse. */}
         {jobs.some((job) => job.status === 'running' || job.status === 'queued') ? (
-          <p class="muted">
+          <p class="muted no-js-only">
             Analysis is running. <a href={base}>Refresh</a> for progress.
           </p>
         ) : null}
       </div>
 
       <h2>Suggested moments</h2>
+      <div data-live="moments">
       {/* The honest answer to "is it even following the right kid" — and the
           place to fix it when it is not. */}
       <p class="muted">
@@ -513,6 +527,7 @@ export const ProjectPage: FC<ProjectView> = ({
           </div>
         </>
       )}
+      </div>
 
       <h2>Reel</h2>
       <div class="card">
