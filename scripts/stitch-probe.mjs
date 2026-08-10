@@ -87,9 +87,12 @@ const union = (tracks) => {
 for (const p of proposals) {
   console.log(
     `  +${p.startTs.toFixed(1)}-${p.endTs.toFixed(1)}s (${p.seconds.toFixed(1)}s) ` +
-      `gap ${p.gapSeconds.toFixed(2)}s dist ${p.distancePx}px colour ${p.score.toFixed(3)}`,
+      `gap ${p.gapSeconds.toFixed(2)}s dist ${p.distancePx}px colour ${p.score.toFixed(3)}  ${p.trackId}`,
   );
 }
+
+// The ids, which are what a caller acts on.
+console.log(`\nALL: ${[...reference.map((t) => t.id), ...proposals.map((p) => p.trackId)].join(',')}`);
 
 const after = [...reference, ...proposals.map((p) => series.find((t) => t.id === p.trackId))].filter(
   Boolean,
