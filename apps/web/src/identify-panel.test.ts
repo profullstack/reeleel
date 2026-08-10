@@ -22,6 +22,7 @@ const view: ProjectView = {
   clips: [],
   jobs: [],
   exports: [],
+  music: [],
   flash: {},
 };
 

@@ -43,6 +43,7 @@ const render = async (moments: ProjectView['moments']): Promise<string> =>
       clips: [],
       jobs: [],
       exports: [],
+      music: [],
       flash: {},
     }),
   );

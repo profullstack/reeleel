@@ -123,6 +123,8 @@ export interface ProjectView {
   jobs: Job[];
   /** Newest first, so "the latest export" is simply the first one. */
   exports: ExportRecord[];
+  /** Uploaded background music, by filename. */
+  music: string[];
   flash: Flash;
 }
 
@@ -134,6 +136,7 @@ export const ProjectPage: FC<ProjectView> = ({
   clips,
   jobs,
   exports,
+  music,
   flash,
 }) => {
   const base = `/projects/${encodeURIComponent(project.id)}`;
@@ -508,6 +511,62 @@ export const ProjectPage: FC<ProjectView> = ({
               Export reel
             </button>
           </div>
+          <div class="row" style="margin-top:.5rem">
+            {/* The bed sits well under the game: the crowd and the shoes are
+                most of why a clip is worth keeping. */}
+            <label for="music" style="margin:0">
+              Music
+            </label>
+            <select id="music" name="music" style="font:inherit;padding:.35rem;border-radius:.4rem">
+              <option value="none">none</option>
+              {music.map((track) => (
+                <option value={track} key={track}>
+                  {track}
+                </option>
+              ))}
+            </select>
+            <label for="musicVolume" style="margin:0">
+              Level
+            </label>
+            <input
+              id="musicVolume"
+              name="musicVolume"
+              type="number"
+              min="0"
+              max="1"
+              step="0.02"
+              value="0.18"
+              style="max-width:5rem"
+            />
+            <label for="fadeSeconds" style="margin:0">
+              Fade
+            </label>
+            <input
+              id="fadeSeconds"
+              name="fadeSeconds"
+              type="number"
+              min="0"
+              max="3"
+              step="0.05"
+              value="0.35"
+              style="max-width:5rem"
+            />
+            <span class="muted">seconds, each end of every clip</span>
+          </div>
+        </form>
+
+        <form
+          method="post"
+          action={`${base}/music`}
+          enctype="multipart/form-data"
+          class="row"
+          style="margin-top:.5rem"
+        >
+          <input type="file" name="music" accept="audio/*" />
+          <button type="submit">Add music</button>
+          <span class="muted">
+            {music.length === 0 ? 'No music uploaded yet.' : `${music.length} track(s) available.`}
+          </span>
         </form>
       </div>
 
