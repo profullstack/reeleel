@@ -452,10 +452,55 @@ export const analyzeProject = async (
         job.id,
         tracksCreated === 0
           ? 'No tracks were produced, so there was nothing to score. The detector found nothing it recognised in this footage.'
-          : `Tracks were found but none scored above the ${plugin.moments.minScore} threshold for ${manifest.sport}.` +
-              ' Marking an athlete to follow gives scoring an anchor and usually raises scores.',
+          : `Tracks were found but none scored above the ${plugin.moments.minScore} threshold for ${manifest.sport}.`,
         'warn',
       );
+      /**
+       * The advice this used to give — "try marking an athlete" — was a guess
+       * dressed as a diagnosis, and when it was wrong the user had no way to
+       * tell. Report what was actually measured instead, and in particular
+       * whether the threshold was reachable at all: telling someone their
+       * footage scored too low is misleading when no footage could have scored
+       * high enough.
+       */
+      for (const { diagnosis } of scored.diagnoses) {
+        const classes =
+          Object.entries(diagnosis.tracksByClass)
+            .sort((a, b) => b[1] - a[1])
+            .map(([name, count]) => `${name} ${count}`)
+            .join(', ') || 'none';
+        await logJob(
+          root,
+          job.id,
+          `what was seen: ${classes}; longest track ${diagnosis.longestTrackSeconds.toFixed(1)}s; ` +
+            `athlete identified: ${diagnosis.focalBound ? 'yes' : 'no'}`,
+          'warn',
+        );
+        await logJob(
+          root,
+          job.id,
+          `scoring: best window ${diagnosis.bestScore.toFixed(3)} at ${diagnosis.bestTs.toFixed(0)}s ` +
+            `vs threshold ${diagnosis.threshold}; highest reachable ${diagnosis.ceiling.toFixed(3)}` +
+            (diagnosis.unmeasurable.length === 0
+              ? ''
+              : ` (no data for: ${diagnosis.unmeasurable.join(', ')})`),
+          'warn',
+        );
+        if (!diagnosis.reachable) {
+          // The important case, and the one the old message got wrong.
+          const because = !diagnosis.focalBound
+            ? 'No athlete is identified, so every signal that follows your athlete stayed dark. Open "Identify your athlete" and pick your kid — it re-scores in seconds without re-running detection.'
+            : (diagnosis.tracksByClass['ball'] ?? 0) === 0
+              ? 'An athlete is identified, but no ball was detected in this footage, and ball proximity carries most of the weight.'
+              : 'Too few signals had data for any window to clear the threshold.';
+          await logJob(
+            root,
+            job.id,
+            `nothing could have scored above ${diagnosis.threshold} on this run. ${because}`,
+            'warn',
+          );
+        }
+      }
     }
     for (const warning of warnings) await logJob(root, job.id, warning, 'warn');
 

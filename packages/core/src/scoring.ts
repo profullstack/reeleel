@@ -326,6 +326,98 @@ export const scoreWindow = (
 };
 
 /**
+ * Why a run produced the moments it did — or, far more usefully, why it produced
+ * none.
+ *
+ * "Tracks were found but none scored above the threshold" is not a diagnosis.
+ * It is consistent with footage that was genuinely dull, with an athlete nobody
+ * identified, and with a detector that never saw a ball — three problems whose
+ * fixes have nothing in common. The number that separates them is the *ceiling*:
+ * the best score reachable given which signals had data at all. When the ceiling
+ * sits below the threshold, no footage however good could have cleared it, and
+ * telling the user to try better footage is actively wrong advice.
+ */
+export interface ScoringDiagnosis {
+  threshold: number;
+  /** Best score any window actually reached. */
+  bestScore: number;
+  bestTs: number;
+  /** Best score *reachable* given only the signals that had data. */
+  ceiling: number;
+  /** False when the threshold is unreachable no matter what happens on screen. */
+  reachable: boolean;
+  focalBound: boolean;
+  /** How many tracks of each class the detector produced. */
+  tracksByClass: Record<string, number>;
+  /** Longest single track, in seconds — short ones mean fragmented tracking. */
+  longestTrackSeconds: number;
+  /** Signals that had data somewhere in the footage. */
+  measurable: string[];
+  /** Signals that never had data, and the weight they no longer consume. */
+  unmeasurable: string[];
+}
+
+export const explainScoring = (input: ScoringInput, plugin: SportPlugin): ScoringDiagnosis => {
+  const step = input.windowSeconds ?? 1;
+  const context = buildContext(input, plugin.targetClass);
+  const weights = ruleWeights(plugin);
+
+  const measurable = new Set<string>();
+  let definedWeight = 0;
+  for (const [id, signal] of Object.entries(SIGNALS)) {
+    const weight = weights.get(id);
+    if (weight === undefined || weight <= 0) continue;
+    definedWeight += weight;
+    // A signal counts as measurable if it had data anywhere, not everywhere: a
+    // ball visible for ten seconds of a game is still a ball.
+    for (let ts = 0; ts <= input.durationSeconds; ts += step) {
+      if (signal(context, ts) !== null) {
+        measurable.add(id);
+        break;
+      }
+    }
+  }
+
+  const measurableWeight = [...measurable].reduce((sum, id) => sum + (weights.get(id) ?? 0), 0);
+  const floor = definedWeight * 0.5;
+  const ceiling = measurableWeight > 0 ? clamp01(measurableWeight / Math.max(measurableWeight, floor)) : 0;
+
+  let best: WindowScore = { ts: 0, score: 0, reasons: [] };
+  if (step > 0 && input.durationSeconds > 0) {
+    for (let ts = 0; ts <= input.durationSeconds; ts += step) {
+      const window = scoreWindow(context, plugin, ts);
+      if (window.score > best.score) best = window;
+    }
+  }
+
+  const tracksByClass: Record<string, number> = {};
+  let longestTrackSeconds = 0;
+  for (const track of input.tracks) {
+    tracksByClass[track.className] = (tracksByClass[track.className] ?? 0) + 1;
+    const first = track.samples[0];
+    const last = track.samples[track.samples.length - 1];
+    if (first !== undefined && last !== undefined) {
+      longestTrackSeconds = Math.max(longestTrackSeconds, last.ts - first.ts);
+    }
+  }
+
+  return {
+    threshold: plugin.moments.minScore,
+    bestScore: best.score,
+    bestTs: best.ts,
+    ceiling,
+    reachable: ceiling >= plugin.moments.minScore,
+    focalBound: context.focal !== null,
+    tracksByClass,
+    longestTrackSeconds,
+    measurable: [...measurable],
+    unmeasurable: Object.keys(SIGNALS).filter(
+      (id) => !measurable.has(id) && (weights.get(id) ?? 0) > 0,
+    ),
+  };
+};
+
+/**
  * Scores every window, then merges runs above `minScore` into moments, applying
  * the sport's pre/post roll and duration clamps.
  */

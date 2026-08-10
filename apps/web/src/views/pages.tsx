@@ -138,6 +138,9 @@ export const ProjectPage: FC<ProjectView> = ({
 }) => {
   const base = `/projects/${encodeURIComponent(project.id)}`;
   const kept = moments.filter((m) => m.included === true).length;
+  // Bound to a track — not merely existing, and not merely flagged focal. The
+  // track is what scoring reads.
+  const identified = athletes.some((athlete) => athlete.focalTrackId !== null);
 
   return (
     <Layout title={project.name}>
@@ -287,22 +290,28 @@ export const ProjectPage: FC<ProjectView> = ({
           is yours. Until an athlete is bound to a track, scoring has no focal
           signal and cannot reach its own threshold. Replaced by a grid of
           cropped frames on mount; without JavaScript it stays a plain form. */}
-      <details class="card" open={athletes.length > 0}>
-        <summary>Identify your athlete</summary>
+      {/* Open precisely when it is the outstanding step. This was inverted:
+          it opened once an athlete existed — that is, once you had already done
+          the hard part — and stayed shut for the person who had done nothing
+          yet and needed it most. */}
+      <details class="card" open={!identified}>
+        <summary>
+          Identify your athlete{identified ? '' : ' — required for any suggestions'}
+        </summary>
         <div id="identify-athlete" data-base={base} style="margin-top:.75rem">
           <p class="muted">
             Run analysis first, then pick which tracked player is your athlete. Without that,
             scoring has nothing to follow and will suggest nothing.
           </p>
-          {athletes.length === 0 ? null : (
-            <form method="post" action={`${base}/athletes/${athletes[0]?.id ?? ''}/track`}>
-              <div class="field">
-                <label for="trackId">Track id</label>
-                <input id="trackId" name="trackId" type="text" placeholder="trk_…" />
-              </div>
-              <button type="submit">Bind to {athletes[0]?.name ?? 'athlete'}</button>
-            </form>
-          )}
+          {/* `new` creates the athlete on submit, so the no-JS path has no
+              prerequisite either. */}
+          <form method="post" action={`${base}/athletes/${athletes[0]?.id ?? 'new'}/track`}>
+            <div class="field">
+              <label for="trackId">Track id</label>
+              <input id="trackId" name="trackId" type="text" placeholder="trk_…" />
+            </div>
+            <button type="submit">Bind to {athletes[0]?.name ?? 'my athlete'}</button>
+          </form>
         </div>
       </details>
 
