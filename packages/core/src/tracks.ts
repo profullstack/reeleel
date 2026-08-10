@@ -261,6 +261,119 @@ export const clearTracks = async (root: string, videoId: string): Promise<ClearT
   return { removed: doomed.length, unboundAthletes };
 };
 
+/** What an athlete was following, kept across a re-detection. */
+export interface AthleteBinding {
+  athleteId: string;
+  /** The tracks they were bound to, as geometry rather than as ids. */
+  series: TrackSeries[];
+}
+
+/**
+ * Remembers where each athlete's tracks *were*, before they are deleted.
+ *
+ * Track ids do not survive re-detection, so replacing a video's tracks used to
+ * throw the user's work away: identify your athlete, re-run detection, identify
+ * them again — three times in one evening, and once after a ten-minute pass.
+ * Positions do survive, because the athlete was in the same place on the same
+ * frames whichever run observed them.
+ */
+export const snapshotAthleteBindings = async (
+  root: string,
+  videoId: string,
+): Promise<AthleteBinding[]> => {
+  const db = await projectDb(root);
+  const rows = await all<{ id: string; focal_track_id: string | null }>(
+    db,
+    'SELECT id, focal_track_id FROM athletes',
+  );
+  const series = await loadTrackSeries(root, videoId);
+  const byId = new Map(series.map((track) => [track.id, track]));
+
+  const bindings: AthleteBinding[] = [];
+  for (const row of rows) {
+    const assigned = await tracksForAthlete(root, row.id);
+    const ids = new Set([...assigned, ...(row.focal_track_id === null ? [] : [row.focal_track_id])]);
+    const kept = [...ids].map((id) => byId.get(id)).filter((t): t is TrackSeries => t !== undefined);
+    if (kept.length > 0) bindings.push({ athleteId: row.id, series: kept });
+  }
+  return bindings;
+};
+
+/** Intersection-over-union of two boxes. */
+const boxIou = (a: TrackSample, b: TrackSample): number => {
+  const x1 = Math.max(a.x, b.x);
+  const y1 = Math.max(a.y, b.y);
+  const x2 = Math.min(a.x + a.w, b.x + b.w);
+  const y2 = Math.min(a.y + a.h, b.y + b.h);
+  const overlap = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+  if (overlap <= 0) return 0;
+  return overlap / (a.w * a.h + b.w * b.h - overlap);
+};
+
+/**
+ * How much two tracks look like the same person: mean box overlap across the
+ * frames they share, times nothing else. Tracks that never coexist score zero,
+ * which is what stops a re-bind from picking a stranger who happened to stand
+ * where the athlete used to be an hour of footage later.
+ */
+export const trackSimilarity = (a: TrackSeries, b: TrackSeries): number => {
+  const other = new Map(b.samples.map((sample) => [Math.round(sample.ts * 4), sample]));
+  let total = 0;
+  let shared = 0;
+  for (const sample of a.samples) {
+    const match = other.get(Math.round(sample.ts * 4));
+    if (match === undefined) continue;
+    shared += 1;
+    total += boxIou(sample, match);
+  }
+  return shared === 0 ? 0 : (total / shared) * Math.min(1, shared / 10);
+};
+
+/** Below this, a candidate is a different person and the binding is dropped. */
+const REBIND_THRESHOLD = 0.3;
+
+/**
+ * Re-attaches each athlete to whichever new tracks occupy the same space and
+ * time as the ones they were bound to. Returns the athletes that could be
+ * restored, so a caller can say plainly which ones still need a human.
+ */
+export const rebindAthletes = async (
+  root: string,
+  videoId: string,
+  bindings: AthleteBinding[],
+): Promise<{ athleteId: string; trackIds: string[] }[]> => {
+  if (bindings.length === 0) return [];
+  const fresh = await loadTrackSeries(root, videoId);
+  if (fresh.length === 0) return [];
+
+  const restored: { athleteId: string; trackIds: string[] }[] = [];
+  for (const binding of bindings) {
+    const matched = new Set<string>();
+    for (const old of binding.series) {
+      let best: { id: string; score: number } | null = null;
+      for (const candidate of fresh) {
+        if (candidate.className !== old.className) continue;
+        const score = trackSimilarity(old, candidate);
+        if (score > (best?.score ?? 0)) best = { id: candidate.id, score };
+      }
+      if (best !== null && best.score >= REBIND_THRESHOLD) matched.add(best.id);
+    }
+    if (matched.size === 0) continue;
+
+    const trackIds = [...matched];
+    const primary = trackIds[0];
+    if (primary === undefined) continue;
+    await assignTracksToAthlete(root, binding.athleteId, trackIds);
+    const db = await projectDb(root);
+    await execute(db, 'UPDATE athletes SET focal_track_id = ? WHERE id = ?', [
+      primary,
+      binding.athleteId,
+    ]);
+    restored.push({ athleteId: binding.athleteId, trackIds });
+  }
+  return restored;
+};
+
 /** Fuses `sourceId` into `targetId` — the annotator's "merge tracks" action. */
 export const mergeTracks = async (
   root: string,
