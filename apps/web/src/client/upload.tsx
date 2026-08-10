@@ -1,6 +1,8 @@
 /** @jsxImportSource hono/jsx/dom */
 import { render, useEffect, useRef, useState } from 'hono/jsx/dom';
 
+import { refreshLive } from './live.js';
+
 /**
  * The realtime uploader.
  *
@@ -301,9 +303,10 @@ const Uploader = ({ base }: { base: string }) => {
         name: finished.upload?.fileName ?? item.name,
       });
 
-      // Everything settled: bring the page's own video list up to date.
+      // Everything settled: bring the page's own video list up to date. Swapped
+      // in place, so a second upload queued behind this one is not interrupted.
       if (items.current.every((entry) => entry.phase === 'done' || entry.phase === 'canceled')) {
-        window.setTimeout(() => window.location.reload(), 1200);
+        void refreshLive();
       }
     } catch (error) {
       // A canceled request is a user action, not a failure to report.
@@ -402,7 +405,7 @@ const Uploader = ({ base }: { base: string }) => {
     try {
       await api(`${base}/uploads/${dto.id}/finish`, { method: 'POST' });
       await refresh();
-      window.setTimeout(() => window.location.reload(), 800);
+      void refreshLive();
     } catch (error) {
       setListError(error instanceof Error ? error.message : String(error));
     }

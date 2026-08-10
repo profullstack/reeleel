@@ -741,27 +741,53 @@ export const registerActions = (app: Hono): void => {
       if (trackId.length === 0) throw new UploadError('INVALID_INPUT', 'Choose a track first.');
 
       /**
-       * `new` creates the athlete on the spot.
+       * `new` means "I have not told you who this is", not "make me another
+       * one".
        *
-       * Identifying an athlete is the one step scoring cannot proceed without,
-       * and it used to require having already created an athlete record — a
-       * prerequisite the UI hid until you had satisfied it. Someone who had
-       * never added an athlete saw a collapsed panel offering nothing to click,
-       * and every run they made was mathematically incapable of producing a
-       * moment. Picking a face is now the whole of the setup.
+       * It created an athlete unconditionally, and the client sends it whenever
+       * its own athlete list has not loaded yet — which is every click made
+       * faster than a page reload. A user marking their child on the footage,
+       * pausing and clicking again a dozen times, produced a dozen athletes
+       * named "My athlete", each bound to exactly one fragment, each in turn
+       * made the focal one. Scoring reads the focal flag, so all of that work
+       * collapsed to whichever click happened last: production ended up with
+       * eight athletes, seven of them duplicates created less than three
+       * minutes apart, and one selection in use.
+       *
+       * Identifying is still the one step that cannot be skipped, so this
+       * still creates an athlete when there genuinely is none. It just prefers
+       * the one already being followed.
        */
       const requested = c.req.param('id') ?? '';
+      const existing = requested === 'new' ? await listAthletes(root) : [];
+      const reusable = existing.find((candidate) => candidate.isFocal) ?? existing[0];
       const athlete =
         requested === 'new'
-          ? await addAthlete(root, { name: 'My athlete', ...identity })
+          ? (reusable ?? (await addAthlete(root, { name: 'My athlete', ...identity })))
           : await getAthlete(root, requested);
       const athleteId = athlete.id;
       // Following and being bound to a track are different things; a picked
       // athlete is obviously the one to follow. Any identity the picker
-      // collected rides along, so "#14 in white" replaces "My athlete".
+      // collected rides along, so "#14 in white" replaces "My athlete" — on a
+      // reused athlete too, which is how a name reaches one created before the
+      // fields existed.
       await updateAthlete(root, athleteId, { focalTrackId: trackId, focal: true, ...identity });
-      // Every fragment the user picked, not only the first.
-      const assigned = await assignTracksToAthlete(root, athleteId, requestedIds);
+
+      /**
+       * Add to the athlete, or set them, depending on what the caller knew.
+       *
+       * The picker holds the whole selection and posts all of it, so unticking
+       * a crop has to be able to remove it — that call names the athlete and
+       * replaces the set. A caller that said `new` did not know who this was
+       * and cannot have sent the existing fragments, so replacing would silently
+       * discard every earlier pick. Marking the same child at six moments on the
+       * footage should leave them marked at six moments.
+       */
+      const adding = requested === 'new' && reusable !== undefined;
+      const finalIds = adding
+        ? [...new Set([...(await tracksForAthlete(root, athleteId)), ...requestedIds])]
+        : requestedIds;
+      const assigned = await assignTracksToAthlete(root, athleteId, finalIds);
 
       startAnalysis(root, { preset: 'balanced', scoreOnly: true });
 

@@ -1,6 +1,8 @@
 /** @jsxImportSource hono/jsx/dom */
 import { render, useEffect, useRef, useState } from 'hono/jsx/dom';
 
+import { refreshLive } from './live.js';
+
 /**
  * The live analysis log.
  *
@@ -104,9 +106,16 @@ const JobLog = ({ base }: { base: string }) => {
         if (next.some((job) => job.status === 'running' || job.status === 'queued')) {
           reloadWhenDone.current = true;
         } else if (reloadWhenDone.current && next.some((job) => job.status === 'completed')) {
-          // Analysis writes moments; the page around this island is stale now.
+          /**
+           * Analysis writes moments, so the page around this island is stale —
+           * but reloading it was a blunt instrument. It threw away scroll
+           * position, collapsed whatever the user had open, and interrupted a
+           * selection in progress; worse, it raced their clicks, which is how
+           * one athlete became seven. Swapping the server-rendered regions
+           * leaves everything else exactly where it was.
+           */
           reloadWhenDone.current = false;
-          window.setTimeout(() => window.location.reload(), 1500);
+          void refreshLive();
         }
       });
 
