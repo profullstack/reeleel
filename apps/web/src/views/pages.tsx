@@ -424,6 +424,12 @@ export const ProjectPage: FC<ProjectView> = ({
       </div>
 
       <h2>Suggested moments</h2>
+      {/* The honest answer to "is it even following the right kid" — and the
+          place to fix it when it is not. */}
+      <p class="muted">
+        <a href={`${base}/review`}>See what the detector sees</a> — every track over the whole
+        game, and click your athlete to identify them.
+      </p>
       {moments.length === 0 ? (
         <p class="empty">Nothing suggested yet — run analysis.</p>
       ) : (
