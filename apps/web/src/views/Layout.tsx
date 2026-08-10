@@ -161,8 +161,12 @@ export const Layout: FC<PropsWithChildren<{ title: string }>> = ({ title, childr
       <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
       <title>{title} · ReelEel</title>
       <link rel="manifest" href="/manifest.webmanifest" />
+      {/* PNG first for the browsers that ignore SVG icons; the SVG stays as a
+          scalable fallback rather than being thrown away. */}
+      <link rel="icon" href="/brand/favicon-32.png" sizes="32x32" type="image/png" />
+      <link rel="icon" href="/brand/favicon-16.png" sizes="16x16" type="image/png" />
       <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-      <link rel="apple-touch-icon" href="/icon.svg" />
+      <link rel="apple-touch-icon" href="/brand/apple-touch-icon.png" sizes="180x180" />
       <meta name="theme-color" content="#0f766e" />
       <meta name="apple-mobile-web-app-capable" content="yes" />
       <meta name="apple-mobile-web-app-title" content="ReelEel" />
@@ -177,7 +181,19 @@ export const Layout: FC<PropsWithChildren<{ title: string }>> = ({ title, childr
     </head>
     <body>
       <header>
-        <a href="/">ReelEel</a>
+        {/* The mark carries the name, so the link's accessible name comes from
+            alt text rather than a second copy of the word beside it. Width and
+            height are set to stop the header reflowing as it loads. */}
+        <a href="/" style="display:inline-flex;align-items:center">
+          <img
+            src="/brand/logo.png"
+            srcset="/brand/logo.png 1x, /brand/logo@2x.png 2x"
+            alt="ReelEel"
+            width="68"
+            height="48"
+            style="height:48px;width:auto;display:block"
+          />
+        </a>
         <span class="muted">local-first sports highlights</span>
         <nav>
           <a href="/">Projects</a>

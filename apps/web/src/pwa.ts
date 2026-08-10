@@ -26,9 +26,19 @@ export const MANIFEST = {
   orientation: 'any',
   background_color: '#0f1115',
   theme_color: '#0f766e',
+  /**
+   * Real PNGs at the sizes installers ask for. An SVG-only icon list is
+   * accepted by the manifest spec and quietly ignored by several Android
+   * launchers, which then fall back to a screenshot of the page.
+   *
+   * `maskable` is deliberately not claimed: the mascot is drawn to its own
+   * edges, and a launcher that crops a maskable icon to a circle would take the
+   * bat off.
+   */
   icons: [
+    { src: '/brand/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+    { src: '/brand/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
     { src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
-    { src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'maskable' },
   ],
 } as const;
 
