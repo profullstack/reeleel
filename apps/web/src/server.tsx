@@ -66,6 +66,7 @@ import {
 import { registerActions } from './actions.js';
 import { ForgotPage, LoginPage, MessagePage, RegisterPage, ResetPage, VerifyNoticePage } from './views/auth.js';
 import { DoctorPage, ErrorPage, ProjectPage, ProjectsPage } from './views/pages.js';
+import { LandingPage } from './views/landing.js';
 import { ReviewPage } from './views/review.js';
 import type { Flash } from './views/pages.js';
 import { MANIFEST, SERVICE_WORKER } from './pwa.js';
@@ -177,6 +178,29 @@ export const createWebApp = (): Hono => {
       'cache-control': 'no-cache',
     }),
   );
+
+  /**
+   * The public front page.
+   *
+   * Registered above the auth guard on purpose: `/` used to fall through to
+   * `requireAuth`, so a signed-out visitor was bounced to a password form and
+   * never saw what the site was. With a session it serves the project list.
+   */
+  app.get('/', async (c) => {
+    const user = await resolveUserFromRequest(c).catch(() => null);
+    if (user === null) return c.html(<LandingPage signedIn={false} />);
+    try {
+      return c.html(
+        <ProjectsPage
+          projects={await listProjects(scopeFor(c))}
+          sports={listSports().map((sport) => ({ id: sport.id, name: sport.name }))}
+          flash={flashOf(c)}
+        />,
+      );
+    } catch (error) {
+      return c.html(<ErrorPage message={String(error)} />, 500);
+    }
+  });
 
   app.get('/login', async (c) => {
     if ((await resolveUserFromRequest(c)) !== null) return c.redirect('/');
@@ -430,7 +454,8 @@ export const createWebApp = (): Hono => {
     err: c.req.query('err'),
   });
 
-  app.get('/', async (c) => {
+  /** The signed-in home. `/` serves this too when there is a session. */
+  app.get('/projects', async (c) => {
     try {
       return c.html(
         <ProjectsPage
