@@ -1,6 +1,7 @@
 import { serve } from '@hono/node-server';
 
 import { AuthConfigError, assertAuthConfigured, isAuthEnabled } from '@reeleel/api';
+import { failInterruptedJobs, listProjects } from '@reeleel/core';
 
 import { clientBundleExists, createWebApp } from './server.js';
 
@@ -42,6 +43,33 @@ if (!clientBundleExists()) {
       'Pages still render; only the interactive review island will be inert.\n',
   );
 }
+
+/**
+ * Nothing survives a restart, so nothing should claim to.
+ *
+ * Analysis runs in this process. A deploy replaces the container mid-run and
+ * the job row keeps saying `running` for ever — a detection pass killed at
+ * frame 7350 of 9000 is indistinguishable, in the UI, from one still going.
+ * This process owns no running work at the moment it starts, so anything the
+ * database still calls running was interrupted.
+ */
+void (async () => {
+  try {
+    const projects = await listProjects();
+    let failed = 0;
+    for (const project of projects) {
+      // A registered directory that is no longer on disk has no database to open.
+      if (!project.exists) continue;
+      failed += await failInterruptedJobs(project.root);
+    }
+    if (failed > 0) {
+      process.stderr.write(`marked ${failed} interrupted job(s) as failed after restart\n`);
+    }
+  } catch (error) {
+    // Never block startup on housekeeping.
+    process.stderr.write(`job recovery skipped: ${String(error)}\n`);
+  }
+})();
 
 serve(
   {
