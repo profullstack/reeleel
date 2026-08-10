@@ -11,7 +11,7 @@ import { getFocalAthlete } from './athletes.js';
 import { generateMoments } from './moments.js';
 import { generateProxy, generateThumbnails } from './media.js';
 import { readManifest } from './projects.js';
-import { clearTracks, createTrack } from './tracks.js';
+import { clearTracks, createTrack, rebindAthletes, snapshotAthleteBindings } from './tracks.js';
 import type { Job, Preset } from './types.js';
 import { findMissingSources, listVideos } from './videos.js';
 
@@ -189,6 +189,8 @@ export const analyzeProject = async (
   const settings = settingsForPreset(preset);
   const warnings: string[] = [];
   const stagesRun: string[] = [];
+  /** Athlete bindings captured before a re-detection wipes their tracks. */
+  let rememberedBindings: Awaited<ReturnType<typeof snapshotAthleteBindings>> = [];
 
   const missing = await findMissingSources(root);
   if (missing.length > 0) {
@@ -435,6 +437,9 @@ export const analyzeProject = async (
          * be broken. A project analysed six times carried six overlapping copies
          * of every player.
          */
+        // Remembered before the delete, so the athlete can be found again in
+        // the new tracks rather than re-identified by hand every single run.
+        const bindings = await snapshotAthleteBindings(root, video.id);
         const cleared = await clearTracks(root, video.id);
         if (cleared.removed > 0) {
           await logJob(
@@ -443,12 +448,7 @@ export const analyzeProject = async (
             `replacing ${cleared.removed} track(s) from earlier runs of this video`,
           );
         }
-        if (cleared.unboundAthletes.length > 0) {
-          // Track ids do not survive re-detection, so the binding cannot either.
-          warnings.push(
-            'Re-detection replaced the tracks your athlete was bound to. Open "Identify your athlete" and pick them again.',
-          );
-        }
+        rememberedBindings = bindings;
 
         for (const track of parsed.tracks ?? []) {
           await createTrack(root, {
@@ -468,6 +468,29 @@ export const analyzeProject = async (
           tracksCreated += 1;
         }
       }
+      /**
+       * Find the athlete again in the new tracks. Positions survive a
+       * re-detection even though ids do not, so the person standing where the
+       * athlete stood, on the frames they stood there, is them.
+       */
+      if (rememberedBindings.length > 0) {
+        const restored = await rebindAthletes(root, videos[0]?.id ?? '', rememberedBindings);
+        const lost = rememberedBindings.length - restored.length;
+        if (restored.length > 0) {
+          const tracks = restored.reduce((sum, entry) => sum + entry.trackIds.length, 0);
+          await logJob(
+            root,
+            job.id,
+            `re-identified ${restored.length} athlete(s) across ${tracks} new track(s)`,
+          );
+        }
+        if (lost > 0) {
+          warnings.push(
+            `${lost} athlete(s) could not be matched to the new tracks. Open "Identify your athlete" and pick them again.`,
+          );
+        }
+      }
+
       stagesRun.push('detection', 'tracking');
     }
 
