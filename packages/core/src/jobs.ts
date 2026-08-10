@@ -258,6 +258,44 @@ export const removeJob = async (root: string, jobId: string): Promise<Job> => {
   return job;
 };
 
+/**
+ * Fails any job left mid-flight by a restart.
+ *
+ * Analysis runs inside the web process, so a deploy — or a crash, or an OOM —
+ * takes the work with it and leaves the row saying `running` forever. Nothing
+ * was ever going to continue it, and nothing said so: the panel showed a live
+ * job whose progress had quietly stopped advancing, which is indistinguishable
+ * from a slow one. A ten-minute detection pass killed at frame 7350 of 9000
+ * looked exactly like a ten-minute detection pass still going.
+ *
+ * Called on startup, when by definition this process owns no running work.
+ */
+export const failInterruptedJobs = async (root: string): Promise<number> => {
+  const db = await projectDb(root);
+  const orphans = await all<{ id: string }>(
+    db,
+    "SELECT id FROM jobs WHERE status IN ('running', 'queued')",
+  );
+  if (orphans.length === 0) return 0;
+
+  for (const orphan of orphans) {
+    await logJob(
+      root,
+      orphan.id,
+      'interrupted: the server restarted while this was running. Nothing continues it — start it again.',
+      'error',
+    );
+  }
+  // `finished_at`, not `updated_at`: this table records when work stopped.
+  await execute(
+    db,
+    `UPDATE jobs SET status = 'failed', error = ?, finished_at = ?
+      WHERE status IN ('running', 'queued')`,
+    ['Interrupted by a server restart.', nowIso()],
+  );
+  return orphans.length;
+};
+
 /** Bulk cleanup for `reeleel jobs prune`. */
 export const pruneJobs = async (root: string, statuses: JobStatus[]): Promise<number> => {
   if (statuses.length === 0) return 0;
