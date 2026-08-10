@@ -15,6 +15,14 @@ import { loadTrackSeries } from './tracks.js';
 import type { AspectRatio, Clip, Reel } from './types.js';
 import { getVideo, listVideos } from './videos.js';
 
+/**
+ * How loud the music bed sits under the game.
+ *
+ * The crowd, the shoes and a parent shouting are most of why a clip is worth
+ * keeping; music that competes with them makes the reel worse, not better.
+ */
+export const DEFAULT_MUSIC_VOLUME = 0.18;
+
 const CRF_FOR_QUALITY: Record<'low' | 'medium' | 'high', number> = {
   low: 28,
   medium: 23,
@@ -27,9 +35,42 @@ export interface RenderClipOptions {
   quality?: 'low' | 'medium' | 'high';
   /** Skip the Virtual Cameraman and keep the full frame. */
   noCrop?: boolean;
+  /** Seconds of fade at each end. 0 turns it off. */
+  fadeSeconds?: number;
   signal?: AbortSignal;
   onProgress?: (line: string) => void;
 }
+
+/** Default fade, short enough to feel like an edit rather than a transition. */
+export const DEFAULT_FADE_SECONDS = 0.35;
+
+/**
+ * Fade filters for a clip of a known length.
+ *
+ * Cutting straight between plays is jarring, and the audio cut is worse than
+ * the picture: a crowd at full volume stopping dead mid-syllable reads as a
+ * glitch. Both are faded, and the fade is clamped to a third of the clip so a
+ * short moment does not become entirely fade.
+ *
+ * Returned as separate video and audio chains because they attach to different
+ * FFmpeg flags, and as empty strings when there is nothing to do — an empty
+ * `-af` is an error, not a no-op.
+ */
+export const fadeFilters = (
+  durationSeconds: number,
+  fadeSeconds = DEFAULT_FADE_SECONDS,
+): { video: string; audio: string } => {
+  const fade = Math.min(fadeSeconds, durationSeconds / 3);
+  if (!Number.isFinite(fade) || fade <= 0 || !Number.isFinite(durationSeconds)) {
+    return { video: '', audio: '' };
+  }
+  const out = Math.max(0, durationSeconds - fade).toFixed(3);
+  const d = fade.toFixed(3);
+  return {
+    video: `fade=t=in:st=0:d=${d},fade=t=out:st=${out}:d=${d}`,
+    audio: `afade=t=in:st=0:d=${d},afade=t=out:st=${out}:d=${d}`,
+  };
+};
 
 /**
  * Builds the video filter chain for one clip. Split out so tests can assert the
@@ -121,6 +162,20 @@ export const renderClip = async (
   mkdirSync(dir, { recursive: true });
   const output = path.join(dir, `${clip.id}_${aspect.replace(':', 'x')}.mp4`);
 
+  /**
+   * Faded at both ends, picture and sound. Straight cuts between plays are
+   * jarring and the audio cut is the worse of the two — a crowd stopping dead
+   * mid-syllable reads as a broken file rather than an edit.
+   */
+  const fades = fadeFilters(clip.end - clip.start, options.fadeSeconds);
+  const cropFilter = await buildClipFilter(
+    root,
+    clip,
+    aspect,
+    options.noCrop === undefined ? {} : { noCrop: options.noCrop },
+  );
+  const videoFilter = fades.video === '' ? cropFilter : `${cropFilter},${fades.video}`;
+
   const result = await run(
     ffmpeg,
     [
@@ -136,12 +191,8 @@ export const renderClip = async (
       '-to',
       formatTimecode(clip.end),
       '-vf',
-      await buildClipFilter(
-        root,
-        clip,
-        aspect,
-        options.noCrop === undefined ? {} : { noCrop: options.noCrop },
-      ),
+      videoFilter,
+      ...(fades.audio === '' ? [] : ['-af', fades.audio]),
       '-r',
       String(options.fps ?? 30),
       '-c:v',
@@ -184,6 +235,12 @@ export interface RenderReelOptions {
   /** Burn the athlete's name/number into the corner. */
   label?: string;
   watermark?: boolean;
+  /** Audio file to lay under the reel. Looped and trimmed to the footage. */
+  musicPath?: string;
+  /** 0..1, well under the game audio so the crowd still carries the clip. */
+  musicVolume?: number;
+  /** Seconds of fade on each clip. 0 turns it off. */
+  fadeSeconds?: number;
   signal?: AbortSignal;
   onProgress?: (stage: string) => void;
 }
@@ -233,6 +290,7 @@ export const renderReel = async (
     for (const [index, clip] of clips.entries()) {
       options.onProgress?.(`Rendering clip ${index + 1}/${clips.length}`);
       const clipOptions: RenderClipOptions = { aspect };
+      if (options.fadeSeconds !== undefined) clipOptions.fadeSeconds = options.fadeSeconds;
       if (options.fps !== undefined) clipOptions.fps = options.fps;
       if (options.quality !== undefined) clipOptions.quality = options.quality;
       if (options.signal !== undefined) clipOptions.signal = options.signal;
@@ -262,10 +320,51 @@ export const renderReel = async (
     }
 
     const args = ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', listFile];
-    if (filters.length > 0) {
+
+    /**
+     * Music under the game audio, not instead of it.
+     *
+     * The crowd, the squeak of shoes and a parent shouting are most of why the
+     * clip is worth keeping, so the bed sits well below them and the game stays
+     * at full level. It is looped because a reel is usually longer than
+     * whatever was uploaded, trimmed to the reel with `duration=first`, and
+     * faded at the end so it stops rather than being cut off mid-bar.
+     */
+    const music = options.musicPath;
+    const hasMusic = music !== undefined && music.length > 0;
+    if (hasMusic) {
+      if (!existsSync(music)) {
+        throw new ReelEelError('SOURCE_MISSING', `Background music ${music} is gone.`, {
+          hint: 'Upload it again, or render without music.',
+        });
+      }
+      args.push('-stream_loop', '-1', '-i', music);
+    }
+
+    const totalSeconds = clips.reduce((sum, clip) => sum + (clip.end - clip.start), 0);
+    const musicFade = Math.min(2, totalSeconds / 4);
+    const volume = options.musicVolume ?? DEFAULT_MUSIC_VOLUME;
+
+    if (hasMusic) {
+      const chain = [
+        `[1:a]volume=${volume.toFixed(3)}`,
+        `afade=t=out:st=${Math.max(0, totalSeconds - musicFade).toFixed(3)}:d=${musicFade.toFixed(3)}[bed]`,
+      ].join(',');
+      // `duration=first` ends the mix with the footage; the looped bed would
+      // otherwise run for ever.
+      const complex =
+        filters.length > 0
+          ? `[0:v]${filters.join(',')}[v];${chain};[0:a][bed]amix=inputs=2:duration=first:dropout_transition=0[a]`
+          : `${chain};[0:a][bed]amix=inputs=2:duration=first:dropout_transition=0[a]`;
+      args.push('-filter_complex', complex);
+      args.push('-map', filters.length > 0 ? '[v]' : '0:v', '-map', '[a]');
+      args.push('-c:v', filters.length > 0 ? 'libx264' : 'copy');
+      if (filters.length > 0) args.push('-crf', String(CRF_FOR_QUALITY[options.quality ?? 'high']));
+      args.push('-c:a', 'aac', '-b:a', '192k');
+    } else if (filters.length > 0) {
       args.push('-vf', filters.join(','), '-c:v', 'libx264', '-crf', String(CRF_FOR_QUALITY[options.quality ?? 'high']), '-c:a', 'aac');
     } else {
-      // No overlay means no re-encode — fast and lossless.
+      // No overlay and no music means no re-encode — fast and lossless.
       args.push('-c', 'copy');
     }
     args.push('-movflags', '+faststart', outputPath);

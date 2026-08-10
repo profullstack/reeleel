@@ -72,6 +72,8 @@ const Identify = ({ base }: { base: string }) => {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [athletes, setAthletes] = useState<Athlete[]>([]);
   const [athleteId, setAthleteId] = useState<string>('');
+  /** Every fragment the user says is their athlete, not just the last clicked. */
+  const [picked, setPicked] = useState<string[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -85,6 +87,7 @@ const Identify = ({ base }: { base: string }) => {
         ok: boolean;
         candidates?: Candidate[];
         athletes?: Athlete[];
+        assignedTrackIds?: string[];
         error?: string;
       };
       if (!response.ok || !body.ok) throw new Error(body.error ?? 'Could not load candidates.');
@@ -92,6 +95,10 @@ const Identify = ({ base }: { base: string }) => {
       setAthletes(body.athletes ?? []);
       const focal = (body.athletes ?? []).find((a) => a.isFocal) ?? (body.athletes ?? [])[0];
       if (focal !== undefined) setAthleteId(focal.id);
+      // Reopen with the existing choice selected, so adding a fragment is an
+      // edit rather than starting over.
+      const already = body.assignedTrackIds ?? [];
+      setPicked(already.length > 0 ? already : focal?.focalTrackId ? [focal.focalTrackId] : []);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -103,23 +110,36 @@ const Identify = ({ base }: { base: string }) => {
     void load();
   }, [base]);
 
-  const choose = async (candidate: Candidate): Promise<void> => {
-    if (athleteId === '') {
-      setError('Add an athlete first, then say which tracked player is them.');
-      return;
-    }
-    setBusy(candidate.trackId);
+  const toggle = (trackId: string): void => {
+    setPicked((current) =>
+      current.includes(trackId)
+        ? current.filter((id) => id !== trackId)
+        : [...current, trackId],
+    );
+  };
+
+  const save = async (): Promise<void> => {
+    /**
+     * No athlete yet is not a reason to refuse — it is the ordinary first-run
+     * state, and refusing here left the only mandatory step in the product with
+     * no way to complete it. `new` creates the athlete server-side, so picking
+     * faces is the entire setup.
+     */
+    const target = athleteId === '' ? 'new' : athleteId;
+    setBusy(picked[0] ?? 'saving');
     setError(null);
     try {
-      const response = await fetch(`${base}/athletes/${athleteId}/track`, {
+      const response = await fetch(`${base}/athletes/${target}/track`, {
         method: 'POST',
         headers: { accept: 'application/json', 'content-type': 'application/json' },
-        body: JSON.stringify({ trackId: candidate.trackId }),
+        body: JSON.stringify({ trackId: picked[0], trackIds: picked }),
       });
       const body = (await response.json()) as { ok: boolean; error?: string };
       if (!response.ok || !body.ok) throw new Error(body.error ?? 'Could not save that choice.');
       // Re-scoring runs in the background; the job log shows it finishing.
-      window.location.assign(`${base}?ok=${encodeURIComponent('Athlete identified — re-scoring')}`);
+      window.location.assign(
+        `${base}?ok=${encodeURIComponent(`Athlete identified across ${picked.length} track(s) — re-scoring`)}`,
+      );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
       setBusy(null);
@@ -127,6 +147,15 @@ const Identify = ({ base }: { base: string }) => {
   };
 
   if (!loaded) return <p class="muted">Loading tracked players…</p>;
+
+  /** How much of the game the current selection actually follows. */
+  const chosenSeconds = candidates
+    .filter((candidate) => picked.includes(candidate.trackId))
+    .reduce((sum, candidate) => sum + candidate.seconds, 0);
+  const coverage =
+    picked.length === 0
+      ? 'Nothing selected yet.'
+      : `${Math.round(chosenSeconds)}s of footage followed.`;
 
   const bound = athletes.find((athlete) => athlete.focalTrackId !== null);
 
@@ -139,9 +168,7 @@ const Identify = ({ base }: { base: string }) => {
       )}
 
       {athletes.length === 0 ? (
-        <p class="muted">
-          Add an athlete above first — the choice below binds a tracked player to them.
-        </p>
+        <p class="muted">Click your athlete below — we'll create them for you.</p>
       ) : (
         <div class="row" style="margin-bottom:.75rem">
           <label for="who" style="margin:0">
@@ -171,18 +198,21 @@ const Identify = ({ base }: { base: string }) => {
         </p>
       ) : (
         <>
+          {/* Tracking splits one child into several, so the same athlete shows
+              up as several crops. Picking only one binds a fraction of them. */}
           <p class="muted">
-            {candidates.length} tracked player(s), longest on screen first. Click the one that is
-            your athlete.
+            {candidates.length} tracked player(s), longest on screen first. Click{' '}
+            <strong>every</strong> crop that is your athlete — the same child usually appears
+            more than once, and each one you add is more of the game they are followed through.
           </p>
           <div class="candidate-grid">
             {candidates.map((candidate) => (
               <button
                 type="button"
-                class={`candidate${bound?.focalTrackId === candidate.trackId ? ' chosen' : ''}`}
+                class={`candidate${picked.includes(candidate.trackId) ? ' chosen' : ''}`}
                 key={candidate.trackId}
                 disabled={busy !== null}
-                onClick={() => void choose(candidate)}
+                onClick={() => toggle(candidate.trackId)}
                 title={`${candidate.seconds}s on screen, ${candidate.samples} samples, confidence ${candidate.confidence}`}
               >
                 <span class="candidate-crop" style={cropStyle(candidate, base)} />
@@ -191,6 +221,14 @@ const Identify = ({ base }: { base: string }) => {
                 </span>
               </button>
             ))}
+          </div>
+          <div class="row" style="margin-top:.75rem;align-items:center;gap:.75rem">
+            <button type="button" disabled={picked.length === 0 || busy !== null} onClick={() => void save()}>
+              {busy === null
+                ? `Identify as my athlete (${picked.length} selected)`
+                : 'Saving…'}
+            </button>
+            <span class="muted">{coverage}</span>
           </div>
         </>
       )}

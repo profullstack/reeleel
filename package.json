@@ -1,6 +1,6 @@
 {
   "name": "reeleel",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Local-first, FOSS youth-sports video intelligence. Import a game, identify your athlete, get a highlight reel.",

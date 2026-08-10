@@ -123,6 +123,8 @@ export interface ProjectView {
   jobs: Job[];
   /** Newest first, so "the latest export" is simply the first one. */
   exports: ExportRecord[];
+  /** Uploaded background music, by filename. */
+  music: string[];
   flash: Flash;
 }
 
@@ -134,10 +136,14 @@ export const ProjectPage: FC<ProjectView> = ({
   clips,
   jobs,
   exports,
+  music,
   flash,
 }) => {
   const base = `/projects/${encodeURIComponent(project.id)}`;
   const kept = moments.filter((m) => m.included === true).length;
+  // Bound to a track — not merely existing, and not merely flagged focal. The
+  // track is what scoring reads.
+  const identified = athletes.some((athlete) => athlete.focalTrackId !== null);
 
   return (
     <Layout title={project.name}>
@@ -287,22 +293,28 @@ export const ProjectPage: FC<ProjectView> = ({
           is yours. Until an athlete is bound to a track, scoring has no focal
           signal and cannot reach its own threshold. Replaced by a grid of
           cropped frames on mount; without JavaScript it stays a plain form. */}
-      <details class="card" open={athletes.length > 0}>
-        <summary>Identify your athlete</summary>
+      {/* Open precisely when it is the outstanding step. This was inverted:
+          it opened once an athlete existed — that is, once you had already done
+          the hard part — and stayed shut for the person who had done nothing
+          yet and needed it most. */}
+      <details class="card" open={!identified}>
+        <summary>
+          Identify your athlete{identified ? '' : ' — required for any suggestions'}
+        </summary>
         <div id="identify-athlete" data-base={base} style="margin-top:.75rem">
           <p class="muted">
             Run analysis first, then pick which tracked player is your athlete. Without that,
             scoring has nothing to follow and will suggest nothing.
           </p>
-          {athletes.length === 0 ? null : (
-            <form method="post" action={`${base}/athletes/${athletes[0]?.id ?? ''}/track`}>
-              <div class="field">
-                <label for="trackId">Track id</label>
-                <input id="trackId" name="trackId" type="text" placeholder="trk_…" />
-              </div>
-              <button type="submit">Bind to {athletes[0]?.name ?? 'athlete'}</button>
-            </form>
-          )}
+          {/* `new` creates the athlete on submit, so the no-JS path has no
+              prerequisite either. */}
+          <form method="post" action={`${base}/athletes/${athletes[0]?.id ?? 'new'}/track`}>
+            <div class="field">
+              <label for="trackId">Track id</label>
+              <input id="trackId" name="trackId" type="text" placeholder="trk_…" />
+            </div>
+            <button type="submit">Bind to {athletes[0]?.name ?? 'my athlete'}</button>
+          </form>
         </div>
       </details>
 
@@ -339,6 +351,10 @@ export const ProjectPage: FC<ProjectView> = ({
               balanced
             </option>
             <option value="accurate">accurate</option>
+            {/* Slices each frame so the detector can resolve the ball. Five
+                inferences per frame instead of one, so the cost is stated
+                rather than discovered. */}
+            <option value="thorough">thorough — sees the ball, ~5x slower</option>
           </select>
           <button type="submit" disabled={videos.length === 0}>
             Analyze game
@@ -408,6 +424,12 @@ export const ProjectPage: FC<ProjectView> = ({
       </div>
 
       <h2>Suggested moments</h2>
+      {/* The honest answer to "is it even following the right kid" — and the
+          place to fix it when it is not. */}
+      <p class="muted">
+        <a href={`${base}/review`}>See what the detector sees</a> — every track over the whole
+        game, and click your athlete to identify them.
+      </p>
       {moments.length === 0 ? (
         <p class="empty">Nothing suggested yet — run analysis.</p>
       ) : (
@@ -440,6 +462,33 @@ export const ProjectPage: FC<ProjectView> = ({
                     <button type="submit">Reject</button>
                   </form>
                 </div>
+                {/* Watch it here. Deciding whether a five-second suggestion is
+                    any good used to mean keeping it, building clips, exporting
+                    and downloading a reel. `#t=start,end` plays exactly the
+                    span; `preload="none"` means nothing is fetched until the
+                    moment is opened, so a page of suggestions costs nothing. */}
+                {moment.videoId === null ? null : (
+                  /* Visible, not folded away. Twice now something necessary has
+                     been hidden behind a <summary> and gone unnoticed for
+                     hours; `preload="none"` already means an unwatched player
+                     costs nothing, so there is no reason to hide it. The island
+                     overlays detection boxes on this element when it loads. */
+                  <div
+                    class="moment-player"
+                    data-video={`${base}/videos/${moment.videoId}/tracks`}
+                    data-start={String(moment.start)}
+                    data-end={String(moment.end)}
+                    style="position:relative;margin-top:.5rem"
+                  >
+                    <video
+                      controls
+                      preload="none"
+                      playsinline
+                      style="width:100%;max-height:60vh;border-radius:.4rem;background:#000;display:block"
+                      src={`${base}/videos/${moment.videoId}/stream#t=${moment.start.toFixed(2)},${moment.end.toFixed(2)}`}
+                    />
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -468,6 +517,62 @@ export const ProjectPage: FC<ProjectView> = ({
               Export reel
             </button>
           </div>
+          <div class="row" style="margin-top:.5rem">
+            {/* The bed sits well under the game: the crowd and the shoes are
+                most of why a clip is worth keeping. */}
+            <label for="music" style="margin:0">
+              Music
+            </label>
+            <select id="music" name="music" style="font:inherit;padding:.35rem;border-radius:.4rem">
+              <option value="none">none</option>
+              {music.map((track) => (
+                <option value={track} key={track}>
+                  {track}
+                </option>
+              ))}
+            </select>
+            <label for="musicVolume" style="margin:0">
+              Level
+            </label>
+            <input
+              id="musicVolume"
+              name="musicVolume"
+              type="number"
+              min="0"
+              max="1"
+              step="0.02"
+              value="0.18"
+              style="max-width:5rem"
+            />
+            <label for="fadeSeconds" style="margin:0">
+              Fade
+            </label>
+            <input
+              id="fadeSeconds"
+              name="fadeSeconds"
+              type="number"
+              min="0"
+              max="3"
+              step="0.05"
+              value="0.35"
+              style="max-width:5rem"
+            />
+            <span class="muted">seconds, each end of every clip</span>
+          </div>
+        </form>
+
+        <form
+          method="post"
+          action={`${base}/music`}
+          enctype="multipart/form-data"
+          class="row"
+          style="margin-top:.5rem"
+        >
+          <input type="file" name="music" accept="audio/*" />
+          <button type="submit">Add music</button>
+          <span class="muted">
+            {music.length === 0 ? 'No music uploaded yet.' : `${music.length} track(s) available.`}
+          </span>
         </form>
       </div>
 

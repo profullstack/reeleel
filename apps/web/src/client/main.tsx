@@ -2,6 +2,8 @@
 import { render, useState } from 'hono/jsx/dom';
 
 import { mountIdentify } from './identify.js';
+import { mountOverlays } from './overlay.js';
+import { mountReview } from './review.js';
 import { mountJobLog } from './jobs.js';
 import { mountUploads } from './upload.js';
 
@@ -107,6 +109,11 @@ const mount = (): void => {
   mountUploads();
   mountJobLog();
   mountIdentify();
+  // Boxes over each moment's player, so "what did it actually detect" is
+  // answerable by looking rather than by reading counts.
+  mountOverlays();
+  // The review surface: every track over the whole game, click to identify.
+  mountReview();
 
   const node = document.getElementById('moment-review');
   if (node === null) return;

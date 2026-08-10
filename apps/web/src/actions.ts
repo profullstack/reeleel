@@ -1,4 +1,4 @@
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
@@ -11,12 +11,17 @@ import { originAllowed, ownerFor, scopeFor } from '@reeleel/api';
 import {
   addAthlete,
   addVideo,
+  assignTracksToAthlete,
+  tracksForAthlete,
   analyzeProject,
   cancelJob,
   clipsFromMoments,
   createProject,
   createReel,
+  getAthlete,
+  getFocalAthlete,
   getJob,
+  loadTrackSeries,
   isReelEelError,
   listAthleteCandidates,
   listAthletes,
@@ -34,6 +39,9 @@ import {
   removeProject,
   removeVideo,
   renderReel,
+  createJob,
+  logJob,
+  updateJob,
   resolveProjectRoot,
   thumbnailPath,
   updateAthlete,
@@ -252,6 +260,56 @@ const startAnalysis = (
     });
 };
 
+/**
+ * Renders a reel as a *job*, so it appears where every other long task does.
+ *
+ * Rendering was fired off with `void renderReel(...).catch(write to stderr)`.
+ * It worked — a 20-second reel landed on disk — and the person who asked for it
+ * saw nothing at all until they happened to reload the page, so "I did export
+ * reel and nothing" was a completely reasonable reading of a successful render.
+ * A failure would have been even quieter: the reason went to the server's
+ * stderr and nowhere else.
+ */
+const startRender = (
+  root: string,
+  name: string,
+  aspect: AspectRatio,
+  polish: { musicPath?: string; musicVolume?: number; fadeSeconds?: number } = {},
+): void => {
+  void (async () => {
+    const job = await createJob(root, 'render', { name, aspect, ...polish });
+    try {
+      await updateJob(root, job.id, { status: 'running', stage: 'render', progress: 0.05 });
+      await logJob(
+        root,
+        job.id,
+        `rendering "${name}" at ${aspect}` +
+          (polish.musicPath === undefined ? '' : ` with ${path.basename(polish.musicPath)} underneath`),
+      );
+
+      const result = await renderReel(root, name, {
+        aspect,
+        ...polish,
+        onProgress: (message) => {
+          void logJob(root, job.id, message);
+        },
+      });
+
+      await logJob(
+        root,
+        job.id,
+        `done: ${path.basename(result.outputPath)} — ${result.clipCount} clip(s), ` +
+          `${result.durationSeconds.toFixed(1)}s, ready under Exports`,
+      );
+      await updateJob(root, job.id, { status: 'completed', stage: 'done', progress: 1 });
+    } catch (error) {
+      // Said out loud, on the job, where the person who asked is looking.
+      await logJob(root, job.id, `render failed: ${failed(error)}`, 'error');
+      await updateJob(root, job.id, { status: 'failed', stage: 'render', error: failed(error) });
+    }
+  })();
+};
+
 export const registerActions = (app: Hono): void => {
   const guard = async (c: Context): Promise<Response | null> =>
     originAllowed(c) ? null : c.text('Bad origin', 403);
@@ -443,9 +501,14 @@ export const registerActions = (app: Hono): void => {
         ...(videoId === undefined ? {} : { videoId }),
       });
       const athletes = await listAthletes(root);
+      // What the user already picked, so the grid reopens with it selected.
+      const focalAthlete = athletes.find((athlete) => athlete.isFocal) ?? athletes[0];
+      const assignedTrackIds =
+        focalAthlete === undefined ? [] : await tracksForAthlete(root, focalAthlete.id);
       return c.json({
         ok: true,
         candidates,
+        assignedTrackIds,
         athletes: athletes.map((athlete) => ({
           id: athlete.id,
           name: athlete.name,
@@ -501,20 +564,49 @@ export const registerActions = (app: Hono): void => {
     try {
       const root = await rootOf(c);
       const body = c.req.header('content-type')?.includes('application/json') === true
-        ? ((await c.req.json().catch(() => ({}))) as { trackId?: string })
+        ? ((await c.req.json().catch(() => ({}))) as { trackId?: string; trackIds?: string[] })
         : { trackId: field(await c.req.parseBody(), 'trackId') };
 
-      const trackId = typeof body.trackId === 'string' ? body.trackId.trim() : '';
+      /**
+       * Several tracks, because the tracker splits one child into several.
+       * A comma-separated list keeps the no-JS form working unchanged.
+       */
+      const requestedIds = (
+        Array.isArray(body.trackIds)
+          ? body.trackIds
+          : String(body.trackId ?? '').split(',')
+      )
+        .map((id) => (typeof id === 'string' ? id.trim() : ''))
+        .filter((id) => id.length > 0);
+
+      const trackId = requestedIds[0] ?? '';
       if (trackId.length === 0) throw new UploadError('INVALID_INPUT', 'Choose a track first.');
 
-      const athleteId = c.req.param('id') ?? '';
+      /**
+       * `new` creates the athlete on the spot.
+       *
+       * Identifying an athlete is the one step scoring cannot proceed without,
+       * and it used to require having already created an athlete record — a
+       * prerequisite the UI hid until you had satisfied it. Someone who had
+       * never added an athlete saw a collapsed panel offering nothing to click,
+       * and every run they made was mathematically incapable of producing a
+       * moment. Picking a face is now the whole of the setup.
+       */
+      const requested = c.req.param('id') ?? '';
+      const athlete =
+        requested === 'new'
+          ? await addAthlete(root, { name: 'My athlete' })
+          : await getAthlete(root, requested);
+      const athleteId = athlete.id;
       // Following and being bound to a track are different things; a picked
       // athlete is obviously the one to follow.
       await updateAthlete(root, athleteId, { focalTrackId: trackId, focal: true });
+      // Every fragment the user picked, not only the first.
+      const assigned = await assignTracksToAthlete(root, athleteId, requestedIds);
 
       startAnalysis(root, { preset: 'balanced', scoreOnly: true });
 
-      if (prefersJson(c)) return c.json({ ok: true, athleteId, trackId });
+      if (prefersJson(c)) return c.json({ ok: true, athleteId, trackId, assigned });
       return back(c, to, 'Athlete identified — re-scoring with them as the focus');
     } catch (error) {
       if (prefersJson(c)) return uploadJson(c, error);
@@ -627,6 +719,161 @@ export const registerActions = (app: Hono): void => {
       // Streamed, for the same reason uploads are: a reel is not a thing to
       // hold in memory.
       return c.body(Readable.toWeb(createReadStream(resolved)) as ReadableStream);
+    } catch (error) {
+      return back(c, to, undefined, failed(error));
+    }
+  });
+
+  /**
+   * Streams a video so a suggested moment can be watched where it was
+   * suggested.
+   *
+   * Judging a five-second suggestion used to mean keeping it, building clips,
+   * exporting, and downloading a reel — a minutes-long round trip to answer
+   * "is this any good?", which is a question you have to ask of every moment.
+   *
+   * Range requests are the whole point: without them a browser cannot seek, so
+   * playing a moment three minutes in would mean downloading the three minutes
+   * before it. The proxy is preferred over the source for the same reason —
+   * 47MB rather than 198MB, and it is already on disk.
+   */
+  app.get('/projects/:ref/videos/:id/stream', async (c) => {
+    try {
+      const root = await rootOf(c);
+      const video = (await listVideos(root)).find((entry) => entry.id === c.req.param('id'));
+      if (video === undefined) return c.text('No such video', 404);
+
+      const file =
+        video.proxyPath !== null && video.proxyPath !== undefined && existsSync(video.proxyPath)
+          ? video.proxyPath
+          : video.path;
+      if (!existsSync(file)) return c.text('That footage is no longer on disk', 404);
+
+      const size = statSync(file).size;
+      const range = c.req.header('range');
+      c.header('accept-ranges', 'bytes');
+      c.header('content-type', 'video/mp4');
+
+      const match = range === undefined ? null : /^bytes=(\d*)-(\d*)$/.exec(range.trim());
+      if (match === null) {
+        c.header('content-length', String(size));
+        return c.body(Readable.toWeb(createReadStream(file)) as ReadableStream);
+      }
+
+      // An open-ended range ("bytes=1000-") is what a seeking player sends.
+      const start = match[1] === '' ? 0 : Number(match[1]);
+      const end = match[2] === '' ? size - 1 : Math.min(Number(match[2]), size - 1);
+      if (!Number.isFinite(start) || start > end || start >= size) {
+        c.header('content-range', `bytes */${size}`);
+        return c.body(null, 416);
+      }
+
+      c.header('content-range', `bytes ${start}-${end}/${size}`);
+      c.header('content-length', String(end - start + 1));
+      return c.body(
+        Readable.toWeb(createReadStream(file, { start, end })) as ReadableStream,
+        206,
+      );
+    } catch (error) {
+      return c.text(failed(error), 500);
+    }
+  });
+
+  /**
+   * What the detector saw, over one slice of time.
+   *
+   * "It hasn't really detected anybody" is unanswerable from a list of numbers.
+   * Boxes drawn on the footage answer it in a second — and answer the harder
+   * question too, which is whether the thing being followed is actually your
+   * child. Sent as data for the browser to draw rather than burned into a
+   * re-encoded video: no ffmpeg, no wait, and the focal athlete can be
+   * distinguished from everyone else.
+   */
+  app.get('/projects/:ref/videos/:id/tracks', async (c) => {
+    try {
+      const root = await rootOf(c);
+      const videoId = c.req.param('id') ?? '';
+      const known = (await listVideos(root)).find((entry) => entry.id === videoId);
+      if (known === undefined) return c.json({ ok: false, error: 'No such video' }, 404);
+
+      const from = Number(c.req.query('from') ?? 0);
+      const to = Number(c.req.query('to') ?? 0);
+      if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
+        return c.json({ ok: false, error: 'Bad time range' }, 400);
+      }
+
+      const focal = await getFocalAthlete(root);
+      const focalIds = focal === null ? [] : await tracksForAthlete(root, focal.id);
+      const focalSet = new Set([
+        ...focalIds,
+        ...(focal?.focalTrackId === null || focal?.focalTrackId === undefined
+          ? []
+          : [focal.focalTrackId]),
+      ]);
+
+      // Boxes are stored in source pixels; the player shows the proxy, so the
+      // client is told the frame it should scale against.
+      const series = await loadTrackSeries(root, videoId);
+      const tracks = series
+        .map((track) => ({
+          id: track.id,
+          className: track.className,
+          focal: focalSet.has(track.id),
+          samples: track.samples
+            .filter((sample) => sample.ts >= from && sample.ts <= to)
+            .map((sample) => ({
+              ts: Number(sample.ts.toFixed(3)),
+              x: Math.round(sample.x),
+              y: Math.round(sample.y),
+              w: Math.round(sample.w),
+              h: Math.round(sample.h),
+            })),
+        }))
+        .filter((track) => track.samples.length > 0);
+
+      return c.json({
+        ok: true,
+        frameWidth: known.probe?.video?.width ?? 1920,
+        frameHeight: known.probe?.video?.height ?? 1080,
+        tracks,
+      });
+    } catch (error) {
+      return uploadJson(c, error);
+    }
+  });
+
+  /**
+   * Uploads a music bed. Small files, so a plain form post is fine — this is
+   * not the multi-hundred-megabyte path the video uploader exists for.
+   */
+  app.post('/projects/:ref/music', async (c) => {
+    const bad = await guard(c);
+    if (bad !== null) return bad;
+    const ref = c.req.param('ref') ?? '';
+    const to = `/projects/${encodeURIComponent(ref)}`;
+
+    try {
+      const root = await rootOf(c);
+      const body = await c.req.parseBody();
+      const file = body['music'];
+      if (!(file instanceof File) || file.size === 0) {
+        return back(c, to, undefined, 'Choose an audio file first.');
+      }
+      if (file.size > 50 * 1024 * 1024) {
+        return back(c, to, undefined, 'That is over 50MB — a music bed should be far smaller.');
+      }
+
+      // The name is the client's; the directory is ours. basename keeps a
+      // crafted "../../" out of the project.
+      const safe = path.basename(file.name).replace(/[^\w.\- ]+/g, '_');
+      if (!/\.(mp3|m4a|aac|wav|ogg|flac)$/i.test(safe)) {
+        return back(c, to, undefined, 'That does not look like an audio file.');
+      }
+
+      const dir = projectDir(root, 'music');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, safe), Buffer.from(await file.arrayBuffer()));
+      return back(c, to, `${safe} added — pick it when you export`);
     } catch (error) {
       return back(c, to, undefined, failed(error));
     }
@@ -1062,11 +1309,30 @@ export const registerActions = (app: Hono): void => {
       } catch {
         // Already exists — reuse it.
       }
-      void renderReel(root, name, { aspect }).catch((error: unknown) => {
-        process.stderr.write(`render failed: ${failed(error)}\n`);
+      /**
+       * Music is optional and remembered per project: it lives in the project
+       * directory, so re-rendering does not mean re-uploading it.
+       */
+      const musicDir = projectDir(root, 'music');
+      const chosen = field(body, 'music');
+      const musicPath =
+        chosen.length === 0 || chosen === 'none'
+          ? undefined
+          : path.join(musicDir, path.basename(chosen));
+      if (musicPath !== undefined && !existsSync(musicPath)) {
+        return back(c, to, undefined, 'That music file is no longer there.');
+      }
+
+      const volume = Number(field(body, 'musicVolume'));
+      const fade = Number(field(body, 'fadeSeconds'));
+
+      startRender(root, name, aspect, {
+        ...(musicPath === undefined ? {} : { musicPath }),
+        ...(Number.isFinite(volume) && volume >= 0 && volume <= 1 ? { musicVolume: volume } : {}),
+        ...(Number.isFinite(fade) && fade >= 0 && fade <= 3 ? { fadeSeconds: fade } : {}),
       });
 
-      return back(c, to, 'Rendering started — the file appears under exports when done');
+      return back(c, to, 'Rendering — progress appears in the job log, then under Exports');
     } catch (error) {
       return back(c, to, undefined, failed(error));
     }

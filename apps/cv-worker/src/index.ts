@@ -1,11 +1,16 @@
 #!/usr/bin/env node
-import { realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { availableParallelism, cpus } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 import { probe } from '@reeleel/core';
 
-import { COCO_TO_SPORT, mappingFor } from './classes.js';
+import {
+  COCO_TO_SPORT,
+  classSidecarPath,
+  mappingFor,
+  parseModelSidecar,
+} from './classes.js';
 import { DEFAULT_MODEL, defaultModelPath, fetchModel, resolveModelPath } from './models.js';
 import { runPipeline } from './pipeline.js';
 
@@ -112,7 +117,13 @@ const detectAndTrack = async (flags: Record<string, string>): Promise<void> => {
     return;
   }
 
-  const mapping = mappingFor(sport, requested);
+  // Same classes the pipeline will use, or this reports on the wrong model.
+  const sidecarPath = classSidecarPath(modelPath);
+  const declared = existsSync(sidecarPath)
+    ? parseModelSidecar(readFileSync(sidecarPath, 'utf8')).classes
+    : null;
+
+  const mapping = mappingFor(sport, requested, declared);
   if (mapping.produces.length === 0) {
     emit({ error: `This model cannot detect any of: ${requested.join(', ') || '(none requested)'}.` });
     return;
@@ -150,6 +161,8 @@ const detectAndTrack = async (flags: Record<string, string>): Promise<void> => {
       classes: requested,
       frameStride: number(flags['frame-stride'], 2),
       inferenceSize: number(flags['inference-size'], DEFAULT_MODEL.inputSize),
+      // Off unless asked for: it costs grid^2 + 1 inferences per frame.
+      tileGrid: number(flags['tile-grid'], 1),
       minConfidence: number(flags['min-confidence'], 0.3),
       iouThreshold: number(flags['iou'], 0.45),
       sourceWidth: width,

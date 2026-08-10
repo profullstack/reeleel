@@ -26,6 +26,12 @@ export const PROJECT_DIRS = [
   'clips',
   'models',
   'exports',
+  /**
+   * Uploaded background music. Deliberately absent from DERIVED_DIRS below:
+   * it is something the user provided, not something we computed, so
+   * `project clean` must not throw it away.
+   */
+  'music',
 ] as const;
 
 export type ProjectDir = (typeof PROJECT_DIRS)[number];

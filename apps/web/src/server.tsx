@@ -1,5 +1,5 @@
 /** @jsxImportSource hono/jsx */
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -53,7 +53,9 @@ import {
   listMoments,
   listProjects,
   listSports,
+  listTracks,
   listVideos,
+  projectDir,
   newId,
   resolveProjectRoot,
   runChecks,
@@ -64,6 +66,7 @@ import {
 import { registerActions } from './actions.js';
 import { ForgotPage, LoginPage, MessagePage, RegisterPage, ResetPage, VerifyNoticePage } from './views/auth.js';
 import { DoctorPage, ErrorPage, ProjectPage, ProjectsPage } from './views/pages.js';
+import { ReviewPage } from './views/review.js';
 import type { Flash } from './views/pages.js';
 import { ICON_SVG, MANIFEST, SERVICE_WORKER } from './pwa.js';
 
@@ -413,6 +416,42 @@ export const createWebApp = (): Hono => {
     return c.html(<DoctorPage checks={checks} status={worstStatus(checks)} />);
   });
 
+  /**
+   * Everything the detector tracked, scrubbable, with click-to-identify.
+   *
+   * The picker offers the longest tracks, which on fragmented footage are a
+   * coach and the referee. Pointing at the child on screen cannot be misread.
+   */
+  app.get('/projects/:ref/review', async (c) => {
+    try {
+      const ref = c.req.param('ref');
+      if (ref === undefined) return c.html(<ErrorPage message="No project given." />, 400);
+      const root = await resolveProjectRoot(decodeURIComponent(ref), scopeFor(c));
+      const [project, videos, athletes] = await Promise.all([
+        summarizeProject(root),
+        listVideos(root),
+        listAthletes(root),
+      ]);
+      const video = videos[videos.length - 1];
+      const bound = athletes.find((athlete) => athlete.focalTrackId !== null);
+      const tracks = video === undefined ? [] : await listTracks(root, video.id);
+      return c.html(
+        <ReviewPage
+          project={project}
+          video={video}
+          athleteName={bound?.name ?? null}
+          trackCount={tracks.length}
+          flash={flashOf(c)}
+        />,
+      );
+    } catch (error) {
+      if (isReelEelError(error)) {
+        return c.html(<ErrorPage message={error.message} hint={error.hint} />, 404);
+      }
+      return c.html(<ErrorPage message={String(error)} />, 500);
+    }
+  });
+
   app.get('/projects/:ref', async (c) => {
     try {
       const ref = c.req.param('ref');
@@ -428,8 +467,17 @@ export const createWebApp = (): Hono => {
         listJobs(root, { limit: 10 }),
         listExports(root),
       ]);
+      /**
+       * Uploaded music, read from the directory rather than a table: the file
+       * on disk is the record, so nothing can drift out of sync with it.
+       */
+      const musicDir = projectDir(root, 'music');
+      const music = existsSync(musicDir)
+        ? readdirSync(musicDir).filter((name) => /\.(mp3|m4a|aac|wav|ogg|flac)$/i.test(name)).sort()
+        : [];
       return c.html(
         <ProjectPage
+          music={music}
           project={project}
           videos={videos}
           athletes={athletes}

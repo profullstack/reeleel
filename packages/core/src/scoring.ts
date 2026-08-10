@@ -38,6 +38,16 @@ export interface ScoringInput {
   frameHeight: number;
   /** Track the user bound to their athlete. Without it, only scene-wide signals fire. */
   focalTrackId: string | null;
+  /**
+   * Every track that is the same athlete.
+   *
+   * Tracking breaks a player into fragments whenever they are occluded or leave
+   * frame — on real footage the longest single track covered 24 seconds of a
+   * five-minute game, and the same child appeared in the picker as several
+   * separate people. Binding one fragment gave scoring 8% of the athlete.
+   * Supplying all of them stitches the athlete back together.
+   */
+  focalTrackIds?: string[];
   tracks: TrackSeries[];
   audioEnergy?: AudioEnergySample[];
   /** Analysis granularity. Smaller = finer moments, more compute. */
@@ -68,11 +78,29 @@ const center = (sample: TrackSample): Point => ({
 });
 
 /**
+ * Longest silence a straight line may be drawn through when following the
+ * athlete, in seconds.
+ *
+ * Stitching an athlete's fragments together leaves a hole wherever they were off
+ * screen, and a straight line through one of those holes is an invented
+ * position — it would put a child on the court while they sat on the bench, and
+ * score it. This applies only to the focal athlete: the virtual cameraman
+ * legitimately interpolates a smooth path across sparse keyframes, so plain
+ * `sampleAt` still bridges any distance by default.
+ */
+const MAX_FOCAL_GAP = 2;
+
+/**
  * Linear interpolation between the two samples bracketing `ts`. Returns null
  * outside the track's lifetime rather than extrapolating — an off-screen player
- * should produce no signal, not a guessed one.
+ * should produce no signal, not a guessed one. `maxGap` additionally refuses to
+ * bridge silences longer than itself.
  */
-export const sampleAt = (series: TrackSeries, ts: number): Point | null => {
+export const sampleAt = (
+  series: TrackSeries,
+  ts: number,
+  maxGap = Number.POSITIVE_INFINITY,
+): Point | null => {
   const samples = series.samples;
   if (samples.length === 0) return null;
   const first = samples[0];
@@ -86,6 +114,7 @@ export const sampleAt = (series: TrackSeries, ts: number): Point | null => {
     if (previous === undefined || current === undefined) continue;
     if (ts <= current.ts) {
       const span = current.ts - previous.ts;
+      if (span > maxGap) return null;
       if (span <= 0) return center(current);
       const t = (ts - previous.ts) / span;
       const a = center(previous);
@@ -97,9 +126,14 @@ export const sampleAt = (series: TrackSeries, ts: number): Point | null => {
 };
 
 /** Pixels per second, estimated across a small symmetric window. */
-export const velocityAt = (series: TrackSeries, ts: number, dt = 0.25): Point | null => {
-  const before = sampleAt(series, ts - dt);
-  const after = sampleAt(series, ts + dt);
+export const velocityAt = (
+  series: TrackSeries,
+  ts: number,
+  dt = 0.25,
+  maxGap = Number.POSITIVE_INFINITY,
+): Point | null => {
+  const before = sampleAt(series, ts - dt, maxGap);
+  const after = sampleAt(series, ts + dt, maxGap);
   if (before === null || after === null) return null;
   return { x: (after.x - before.x) / (dt * 2), y: (after.y - before.y) / (dt * 2) };
 };
@@ -124,7 +158,16 @@ export interface SignalContext {
   input: ScoringInput;
   diagonal: number;
   focal: TrackSeries | null;
-  ball: TrackSeries | null;
+  /**
+   * Every detected ball track, not one of them.
+   *
+   * This was `tracks.find(t => t.className === 'ball')` — the first ball in the
+   * list and nothing else. A detector that sees the ball intermittently emits it
+   * as many short tracks (56, in the run that prompted this), so the signals
+   * carrying 0.45 of the total weight were reading a single arbitrary fragment
+   * and scoring zero across the rest of the game.
+   */
+  balls: TrackSeries[];
   goals: TrackSeries[];
   others: TrackSeries[];
   /** Median scene speed, used as the baseline for the high-motion signal. */
@@ -139,12 +182,45 @@ const medianOf = (values: number[]): number => {
   return ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2;
 };
 
+/**
+ * One athlete out of however many fragments the tracker produced for them.
+ *
+ * Samples are merged in time order and de-duplicated, keeping the more confident
+ * of any two observations at the same instant — fragments overlap when the
+ * tracker re-acquires someone it had not yet given up on. The result behaves
+ * like a single track everywhere else in this file, so nothing downstream needs
+ * to know the athlete was ever in pieces.
+ */
+export const stitchFocal = (input: ScoringInput): TrackSeries | null => {
+  const ids = input.focalTrackIds ?? (input.focalTrackId === null ? [] : [input.focalTrackId]);
+  if (ids.length === 0) return null;
+
+  const wanted = new Set(ids);
+  const parts = input.tracks.filter((track) => wanted.has(track.id));
+  const first = parts[0];
+  if (first === undefined) return null;
+  if (parts.length === 1) return first;
+
+  const byTs = new Map<number, TrackSample>();
+  for (const part of parts) {
+    for (const sample of part.samples) {
+      const existing = byTs.get(sample.ts);
+      if (existing === undefined || sample.confidence > existing.confidence) {
+        byTs.set(sample.ts, sample);
+      }
+    }
+  }
+
+  return {
+    id: first.id,
+    className: first.className,
+    samples: [...byTs.values()].sort((a, b) => a.ts - b.ts),
+  };
+};
+
 export const buildContext = (input: ScoringInput, targetClass: string | null = 'goal'): SignalContext => {
-  const focal =
-    input.focalTrackId === null
-      ? null
-      : (input.tracks.find((track) => track.id === input.focalTrackId) ?? null);
-  const ball = input.tracks.find((track) => track.className === 'ball') ?? null;
+  const focal = stitchFocal(input);
+  const balls = input.tracks.filter((track) => track.className === 'ball');
   // The scoring target is named by the sport, not assumed to be "goal":
   // basketball tracks a `hoop`, hockey a `net`, football an `end_zone`.
   const goals =
@@ -169,11 +245,48 @@ export const buildContext = (input: ScoringInput, targetClass: string | null = '
     input,
     diagonal: Math.hypot(input.frameWidth, input.frameHeight),
     focal,
-    ball,
+    balls,
     goals,
     others,
     baselineSpeed: medianOf(speeds),
   };
+};
+
+/** The athlete's position at `ts`, refusing to bridge an occlusion gap. */
+const focalAt = (context: SignalContext, ts: number): Point | null =>
+  context.focal === null ? null : sampleAt(context.focal, ts, MAX_FOCAL_GAP);
+
+/** The athlete's velocity at `ts`, on the same terms. */
+const focalVelocityAt = (context: SignalContext, ts: number): Point | null =>
+  context.focal === null ? null : velocityAt(context.focal, ts, 0.25, MAX_FOCAL_GAP);
+
+/**
+ * The ball in play at `ts`, across every ball fragment the detector produced.
+ *
+ * Fragments overlap and contradict each other — a bounce, a hand, a spectator's
+ * bag can all be "sports ball" for a few frames — so when several are live at
+ * once the one nearest the focal player is the one that matters to the signals
+ * that follow the athlete. With no focal player, any live fragment will do.
+ */
+export const ballAt = (
+  context: SignalContext,
+  ts: number,
+): { track: TrackSeries; point: Point } | null => {
+  const live = context.balls
+    .map((track) => {
+      const point = sampleAt(track, ts);
+      return point === null ? null : { track, point };
+    })
+    .filter((entry): entry is { track: TrackSeries; point: Point } => entry !== null);
+
+  const first = live[0];
+  if (first === undefined) return null;
+
+  const player = focalAt(context, ts);
+  if (player === null) return first;
+  return live.reduce((closest, entry) =>
+    distance(entry.point, player) < distance(closest.point, player) ? entry : closest,
+  );
 };
 
 /**
@@ -194,30 +307,40 @@ type SignalFn = (context: SignalContext, ts: number) => number | null;
  */
 export const SIGNALS: Record<string, SignalFn> = {
   player_ball_proximity: (context, ts) => {
-    if (context.focal === null || context.ball === null) return null;
-    const player = sampleAt(context.focal, ts);
-    const ball = sampleAt(context.ball, ts);
-    if (player === null || ball === null) return 0;
+    if (context.focal === null || context.balls.length === 0) return null;
+    const player = focalAt(context, ts);
+    const ball = ballAt(context, ts);
+    /**
+     * No ball on screen right now is not evidence of a dull moment.
+     *
+     * Returning 0 here kept 0.45 of the weight in the denominator while
+     * contributing nothing to the numerator. On real footage the detector saw
+     * the ball for 10 seconds out of 300 — a basketball is about six pixels
+     * across once a 1080p frame becomes a 416x416 tensor — so for 97% of the
+     * game this was charging every window for evidence it could not have had.
+     */
+    if (player === null || ball === null) return null;
     // Full strength within 5% of the frame diagonal, fading out by 20%.
-    const normalized = distance(player, ball) / context.diagonal;
+    const normalized = distance(player, ball.point) / context.diagonal;
     return clamp01(1 - (normalized - 0.05) / 0.15);
   },
 
   ball_approaching_player: (context, ts) => {
-    if (context.focal === null || context.ball === null) return null;
-    const player = sampleAt(context.focal, ts);
-    const ball = sampleAt(context.ball, ts);
-    const ballVelocity = velocityAt(context.ball, ts);
-    if (player === null || ball === null || ballVelocity === null) return 0;
-    if (magnitude(ballVelocity) < 1) return 0;
-    const toPlayer = { x: player.x - ball.x, y: player.y - ball.y };
+    if (context.focal === null || context.balls.length === 0) return null;
+    const player = focalAt(context, ts);
+    const ball = ballAt(context, ts);
+    // Same reasoning as proximity: an unseen ball is unmeasured, not stationary.
+    if (player === null || ball === null) return null;
+    const ballVelocity = velocityAt(ball.track, ts);
+    if (ballVelocity === null || magnitude(ballVelocity) < 1) return 0;
+    const toPlayer = { x: player.x - ball.point.x, y: player.y - ball.point.y };
     return clamp01(cosineSimilarity(ballVelocity, toPlayer));
   },
 
   player_acceleration: (context, ts) => {
     if (context.focal === null) return null;
-    const before = velocityAt(context.focal, ts - 0.5);
-    const after = velocityAt(context.focal, ts + 0.5);
+    const before = focalVelocityAt(context, ts - 0.5);
+    const after = focalVelocityAt(context, ts + 0.5);
     if (before === null || after === null) return 0;
     const delta = Math.abs(magnitude(after) - magnitude(before));
     // Treat a 10%-of-diagonal-per-second change as a full-strength burst.
@@ -226,8 +349,8 @@ export const SIGNALS: Record<string, SignalFn> = {
 
   toward_goal: (context, ts) => {
     if (context.focal === null || context.goals.length === 0) return null;
-    const player = sampleAt(context.focal, ts);
-    const velocity = velocityAt(context.focal, ts);
+    const player = focalAt(context, ts);
+    const velocity = focalVelocityAt(context, ts);
     if (player === null || velocity === null || magnitude(velocity) < 1) return 0;
 
     const goalPoints = context.goals
@@ -322,6 +445,98 @@ export const scoreWindow = (
     ts,
     score: weightSum > 0 ? clamp01(total / Math.max(weightSum, floor)) : 0,
     reasons,
+  };
+};
+
+/**
+ * Why a run produced the moments it did — or, far more usefully, why it produced
+ * none.
+ *
+ * "Tracks were found but none scored above the threshold" is not a diagnosis.
+ * It is consistent with footage that was genuinely dull, with an athlete nobody
+ * identified, and with a detector that never saw a ball — three problems whose
+ * fixes have nothing in common. The number that separates them is the *ceiling*:
+ * the best score reachable given which signals had data at all. When the ceiling
+ * sits below the threshold, no footage however good could have cleared it, and
+ * telling the user to try better footage is actively wrong advice.
+ */
+export interface ScoringDiagnosis {
+  threshold: number;
+  /** Best score any window actually reached. */
+  bestScore: number;
+  bestTs: number;
+  /** Best score *reachable* given only the signals that had data. */
+  ceiling: number;
+  /** False when the threshold is unreachable no matter what happens on screen. */
+  reachable: boolean;
+  focalBound: boolean;
+  /** How many tracks of each class the detector produced. */
+  tracksByClass: Record<string, number>;
+  /** Longest single track, in seconds — short ones mean fragmented tracking. */
+  longestTrackSeconds: number;
+  /** Signals that had data somewhere in the footage. */
+  measurable: string[];
+  /** Signals that never had data, and the weight they no longer consume. */
+  unmeasurable: string[];
+}
+
+export const explainScoring = (input: ScoringInput, plugin: SportPlugin): ScoringDiagnosis => {
+  const step = input.windowSeconds ?? 1;
+  const context = buildContext(input, plugin.targetClass);
+  const weights = ruleWeights(plugin);
+
+  const measurable = new Set<string>();
+  let definedWeight = 0;
+  for (const [id, signal] of Object.entries(SIGNALS)) {
+    const weight = weights.get(id);
+    if (weight === undefined || weight <= 0) continue;
+    definedWeight += weight;
+    // A signal counts as measurable if it had data anywhere, not everywhere: a
+    // ball visible for ten seconds of a game is still a ball.
+    for (let ts = 0; ts <= input.durationSeconds; ts += step) {
+      if (signal(context, ts) !== null) {
+        measurable.add(id);
+        break;
+      }
+    }
+  }
+
+  const measurableWeight = [...measurable].reduce((sum, id) => sum + (weights.get(id) ?? 0), 0);
+  const floor = definedWeight * 0.5;
+  const ceiling = measurableWeight > 0 ? clamp01(measurableWeight / Math.max(measurableWeight, floor)) : 0;
+
+  let best: WindowScore = { ts: 0, score: 0, reasons: [] };
+  if (step > 0 && input.durationSeconds > 0) {
+    for (let ts = 0; ts <= input.durationSeconds; ts += step) {
+      const window = scoreWindow(context, plugin, ts);
+      if (window.score > best.score) best = window;
+    }
+  }
+
+  const tracksByClass: Record<string, number> = {};
+  let longestTrackSeconds = 0;
+  for (const track of input.tracks) {
+    tracksByClass[track.className] = (tracksByClass[track.className] ?? 0) + 1;
+    const first = track.samples[0];
+    const last = track.samples[track.samples.length - 1];
+    if (first !== undefined && last !== undefined) {
+      longestTrackSeconds = Math.max(longestTrackSeconds, last.ts - first.ts);
+    }
+  }
+
+  return {
+    threshold: plugin.moments.minScore,
+    bestScore: best.score,
+    bestTs: best.ts,
+    ceiling,
+    reachable: ceiling >= plugin.moments.minScore,
+    focalBound: context.focal !== null,
+    tracksByClass,
+    longestTrackSeconds,
+    measurable: [...measurable],
+    unmeasurable: Object.keys(SIGNALS).filter(
+      (id) => !measurable.has(id) && (weights.get(id) ?? 0) > 0,
+    ),
   };
 };
 

@@ -11,7 +11,7 @@ import { getFocalAthlete } from './athletes.js';
 import { generateMoments } from './moments.js';
 import { generateProxy, generateThumbnails } from './media.js';
 import { readManifest } from './projects.js';
-import { createTrack } from './tracks.js';
+import { clearTracks, createTrack, rebindAthletes, snapshotAthleteBindings } from './tracks.js';
 import type { Job, Preset } from './types.js';
 import { findMissingSources, listVideos } from './videos.js';
 
@@ -25,16 +25,42 @@ export interface PresetSettings {
   minConfidence: number;
   /** Analyze the proxy instead of the original. */
   useProxy: boolean;
+  /**
+   * Slice each frame into this many tiles per axis and detect in each at the
+   * model's native resolution. 1 leaves it off.
+   *
+   * The shipped detector has a fixed 416x416 input, so a whole 1080p frame is
+   * scaled by 0.217 before it is seen. Players survive that; the ball does not
+   * — measured at 0.54 confidence full-frame against 0.89 from a tile, with
+   * frames the full-frame pass missed entirely coming back. It is opt-in
+   * because it costs tiles^2 + 1 inferences per frame.
+   */
+  tileGrid: number;
 }
 
 export const PRESET_SETTINGS: Record<Exclude<Preset, 'custom'>, PresetSettings> = {
   // CPU-only is a hard requirement, so "fast" has to be genuinely cheap.
-  fast: { frameStride: 5, inferenceSize: 512, minConfidence: 0.35, useProxy: true },
-  balanced: { frameStride: 2, inferenceSize: 768, minConfidence: 0.3, useProxy: true },
-  accurate: { frameStride: 1, inferenceSize: 1280, minConfidence: 0.25, useProxy: false },
+  fast: { frameStride: 5, inferenceSize: 512, minConfidence: 0.35, useProxy: true, tileGrid: 1 },
+  balanced: { frameStride: 2, inferenceSize: 768, minConfidence: 0.3, useProxy: true, tileGrid: 1 },
+  accurate: { frameStride: 1, inferenceSize: 1280, minConfidence: 0.25, useProxy: false, tileGrid: 1 },
+  /**
+   * The one that can see the ball. Five inferences per frame instead of one,
+   * so it is minutes rather than seconds — offered as a choice, not a default,
+   * because nobody's existing runtime should regress silently.
+   */
+  thorough: { frameStride: 2, inferenceSize: 1280, minConfidence: 0.25, useProxy: false, tileGrid: 2 },
 };
 
 export const settingsForPreset = (preset: Preset): PresetSettings => {
+  /**
+   * The web form and the API both cast whatever string arrives into `Preset`
+   * without checking it, so an unknown value used to index a record that does
+   * not have it and crash on the first field access. Falling back keeps a
+   * hand-crafted post from taking a run down.
+   */
+  if (preset !== 'custom' && PRESET_SETTINGS[preset] === undefined) {
+    return PRESET_SETTINGS.balanced;
+  }
   if (preset === 'custom') {
     const config = loadConfig();
     return {
@@ -42,6 +68,7 @@ export const settingsForPreset = (preset: Preset): PresetSettings => {
       inferenceSize: 768,
       minConfidence: 0.3,
       useProxy: true,
+      tileGrid: 1,
     };
   }
   return PRESET_SETTINGS[preset];
@@ -162,6 +189,8 @@ export const analyzeProject = async (
   const settings = settingsForPreset(preset);
   const warnings: string[] = [];
   const stagesRun: string[] = [];
+  /** Athlete bindings captured before a re-detection wipes their tracks. */
+  let rememberedBindings: Awaited<ReturnType<typeof snapshotAthleteBindings>> = [];
 
   const missing = await findMissingSources(root);
   if (missing.length > 0) {
@@ -359,6 +388,8 @@ export const analyzeProject = async (
             String(settings.inferenceSize),
             '--min-confidence',
             String(settings.minConfidence),
+            '--tile-grid',
+            String(settings.tileGrid),
             '--tracker',
             plugin.tracker.algorithm,
             '--backend',
@@ -399,6 +430,26 @@ export const analyzeProject = async (
         const analyzedHeight = input === video.path ? sourceHeight : proxyHeight(video.proxyPath);
         const scale = analyzedHeight > 0 && sourceHeight > 0 ? sourceHeight / analyzedHeight : 1;
 
+        /**
+         * Replace, do not append. Detection used to add its tracks on top of
+         * whatever was already there, so re-analysing a video scored it against
+         * every previous run at once — including runs that were later found to
+         * be broken. A project analysed six times carried six overlapping copies
+         * of every player.
+         */
+        // Remembered before the delete, so the athlete can be found again in
+        // the new tracks rather than re-identified by hand every single run.
+        const bindings = await snapshotAthleteBindings(root, video.id);
+        const cleared = await clearTracks(root, video.id);
+        if (cleared.removed > 0) {
+          await logJob(
+            root,
+            job.id,
+            `replacing ${cleared.removed} track(s) from earlier runs of this video`,
+          );
+        }
+        rememberedBindings = bindings;
+
         for (const track of parsed.tracks ?? []) {
           await createTrack(root, {
             videoId: video.id,
@@ -417,6 +468,29 @@ export const analyzeProject = async (
           tracksCreated += 1;
         }
       }
+      /**
+       * Find the athlete again in the new tracks. Positions survive a
+       * re-detection even though ids do not, so the person standing where the
+       * athlete stood, on the frames they stood there, is them.
+       */
+      if (rememberedBindings.length > 0) {
+        const restored = await rebindAthletes(root, videos[0]?.id ?? '', rememberedBindings);
+        const lost = rememberedBindings.length - restored.length;
+        if (restored.length > 0) {
+          const tracks = restored.reduce((sum, entry) => sum + entry.trackIds.length, 0);
+          await logJob(
+            root,
+            job.id,
+            `re-identified ${restored.length} athlete(s) across ${tracks} new track(s)`,
+          );
+        }
+        if (lost > 0) {
+          warnings.push(
+            `${lost} athlete(s) could not be matched to the new tracks. Open "Identify your athlete" and pick them again.`,
+          );
+        }
+      }
+
       stagesRun.push('detection', 'tracking');
     }
 
@@ -447,15 +521,71 @@ export const analyzeProject = async (
       momentsGenerated === 0 ? 'warn' : 'info',
     );
     if (momentsGenerated === 0) {
+      /**
+       * Judge this on what the scorer had, not on what this run created.
+       * `tracksCreated` is zero for a score-only re-run, so binding an athlete
+       * to 8394 existing tracks reported "no tracks were produced, the detector
+       * found nothing it recognised" — directly contradicted by the very next
+       * line, which counted them.
+       */
+      const scoredTracks = scored.diagnoses.reduce(
+        (sum, entry) => sum + Object.values(entry.diagnosis.tracksByClass).reduce((a, b) => a + b, 0),
+        0,
+      );
       await logJob(
         root,
         job.id,
-        tracksCreated === 0
+        scoredTracks === 0
           ? 'No tracks were produced, so there was nothing to score. The detector found nothing it recognised in this footage.'
-          : `Tracks were found but none scored above the ${plugin.moments.minScore} threshold for ${manifest.sport}.` +
-              ' Marking an athlete to follow gives scoring an anchor and usually raises scores.',
+          : `Tracks were found but none scored above the ${plugin.moments.minScore} threshold for ${manifest.sport}.`,
         'warn',
       );
+      /**
+       * The advice this used to give — "try marking an athlete" — was a guess
+       * dressed as a diagnosis, and when it was wrong the user had no way to
+       * tell. Report what was actually measured instead, and in particular
+       * whether the threshold was reachable at all: telling someone their
+       * footage scored too low is misleading when no footage could have scored
+       * high enough.
+       */
+      for (const { diagnosis } of scored.diagnoses) {
+        const classes =
+          Object.entries(diagnosis.tracksByClass)
+            .sort((a, b) => b[1] - a[1])
+            .map(([name, count]) => `${name} ${count}`)
+            .join(', ') || 'none';
+        await logJob(
+          root,
+          job.id,
+          `what was seen: ${classes}; longest track ${diagnosis.longestTrackSeconds.toFixed(1)}s; ` +
+            `athlete identified: ${diagnosis.focalBound ? 'yes' : 'no'}`,
+          'warn',
+        );
+        await logJob(
+          root,
+          job.id,
+          `scoring: best window ${diagnosis.bestScore.toFixed(3)} at ${diagnosis.bestTs.toFixed(0)}s ` +
+            `vs threshold ${diagnosis.threshold}; highest reachable ${diagnosis.ceiling.toFixed(3)}` +
+            (diagnosis.unmeasurable.length === 0
+              ? ''
+              : ` (no data for: ${diagnosis.unmeasurable.join(', ')})`),
+          'warn',
+        );
+        if (!diagnosis.reachable) {
+          // The important case, and the one the old message got wrong.
+          const because = !diagnosis.focalBound
+            ? 'No athlete is identified, so every signal that follows your athlete stayed dark. Open "Identify your athlete" and pick your kid — it re-scores in seconds without re-running detection.'
+            : (diagnosis.tracksByClass['ball'] ?? 0) === 0
+              ? 'An athlete is identified, but no ball was detected in this footage, and ball proximity carries most of the weight.'
+              : 'Too few signals had data for any window to clear the threshold.';
+          await logJob(
+            root,
+            job.id,
+            `nothing could have scored above ${diagnosis.threshold} on this run. ${because}`,
+            'warn',
+          );
+        }
+      }
     }
     for (const warning of warnings) await logJob(root, job.id, warning, 'warn');
 
