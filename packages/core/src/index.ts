@@ -6,6 +6,7 @@
  * the CLI honest about being the same product.
  */
 export * from './analyze.js';
+export * from './appearance.js';
 export * from './athletes.js';
 export * from './camera.js';
 export * from './candidates.js';

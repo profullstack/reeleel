@@ -24,6 +24,7 @@ import {
   loadTrackSeries,
   isReelEelError,
   listAthleteCandidates,
+  proposeAthleteTracks,
   listAthletes,
   listExports,
   listJobLogsSince,
@@ -627,6 +628,55 @@ export const registerActions = (app: Hono): void => {
    * happened — seconds rather than another full pass. Identifying your athlete
    * should not cost another minute of inference.
    */
+  /**
+   * The rest of the game, found by what the athlete looks like.
+   *
+   * Picking an athlete by hand only ever labels them where the user happened to
+   * look, and re-identification can only confirm a binding where it already
+   * exists — production had a child known for 31.7s of a 300s game. This
+   * proposes the other tracks that match their shirt, with the score, and
+   * assigns nothing: the grid shows them for confirmation. A wrong answer here
+   * puts somebody else's child in the reel, so it is deliberately a suggestion.
+   */
+  app.get('/projects/:ref/athletes/:id/suggestions', async (c) => {
+    try {
+      const root = await rootOf(c);
+      const videoId = c.req.query('videoId');
+      const found = await proposeAthleteTracks(root, c.req.param('id') ?? '', {
+        ...(videoId === undefined ? {} : { videoId }),
+      });
+
+      // Reuse the picker's preview geometry so a proposal renders as the same
+      // crop the user is already choosing from.
+      const previews = new Map(
+        (await listAthleteCandidates(root, { limit: 10_000, minSeconds: 0 })).map(
+          (candidate) => [candidate.trackId, candidate],
+        ),
+      );
+
+      return c.json({
+        ok: true,
+        considered: found.considered,
+        referenceTrackIds: found.referenceTrackIds,
+        proposals: found.proposals.flatMap((proposal) => {
+          const preview = previews.get(proposal.trackId);
+          return preview === undefined
+            ? []
+            : [
+                {
+                  ...preview,
+                  score: proposal.score,
+                  gapSeconds: proposal.gapSeconds,
+                  distancePx: proposal.distancePx,
+                },
+              ];
+        }),
+      });
+    } catch (error) {
+      return uploadJson(c, error);
+    }
+  });
+
   app.post('/projects/:ref/athletes/:id/track', async (c) => {
     const bad = await guard(c);
     if (bad !== null) return bad;

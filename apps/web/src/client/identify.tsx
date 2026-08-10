@@ -28,6 +28,13 @@ interface Candidate {
   sourceHeight: number;
 }
 
+/** Why the server thinks a fragment continues the athlete. */
+interface Match {
+  score: number;
+  gapSeconds: number;
+  distancePx: number;
+}
+
 interface Athlete {
   id: string;
   name: string | null;
@@ -77,6 +84,14 @@ const Identify = ({ base }: { base: string }) => {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  /**
+   * Appearance scores for tracks the server thinks are the same child, keyed by
+   * track id. Picking by hand only labels the athlete where the user happened
+   * to look — on a real game that was 31.7s out of 300.
+   */
+  const [scores, setScores] = useState<Record<string, Match>>({});
+  const [finding, setFinding] = useState(false);
+  const [found, setFound] = useState<string | null>(null);
 
   const load = async (): Promise<void> => {
     try {
@@ -116,6 +131,53 @@ const Identify = ({ base }: { base: string }) => {
         ? current.filter((id) => id !== trackId)
         : [...current, trackId],
     );
+  };
+
+  /**
+   * Ask the server to find this child in the rest of the footage by the colour
+   * of their shirt. Matches are selected, not applied: the grid shows them
+   * ticked so a human confirms before anything is bound, because the cost of a
+   * confident wrong answer is another family's child in the reel.
+   */
+  const findRest = async (): Promise<void> => {
+    setFinding(true);
+    setError(null);
+    setFound(null);
+    try {
+      const response = await fetch(`${base}/athletes/${athleteId}/suggestions`, {
+        headers: { accept: 'application/json' },
+      });
+      const body = (await response.json()) as {
+        ok: boolean;
+        proposals?: (Candidate & Match)[];
+        considered?: number;
+        error?: string;
+      };
+      if (!response.ok || !body.ok) throw new Error(body.error ?? 'Could not search the footage.');
+
+      const proposals = body.proposals ?? [];
+      setScores(
+        Object.fromEntries(
+          proposals.map((p) => [
+            p.trackId,
+            { score: p.score, gapSeconds: p.gapSeconds, distancePx: p.distancePx },
+          ]),
+        ),
+      );
+      setPicked((current) => [
+        ...current,
+        ...proposals.map((p) => p.trackId).filter((id) => !current.includes(id)),
+      ]);
+      setFound(
+        proposals.length === 0
+          ? `Nothing else followed on from where your athlete was, out of ${body.considered ?? 0} tracks checked. Pick any more you recognise by hand.`
+          : `Followed your athlete into ${proposals.length} more fragment(s), out of ${body.considered ?? 0} checked, and selected them. Each one carries on from where a fragment you already have left off, in a matching shirt — check them and untick anything that is not them.`,
+      );
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setFinding(false);
+    }
   };
 
   const save = async (): Promise<void> => {
@@ -205,28 +267,53 @@ const Identify = ({ base }: { base: string }) => {
             <strong>every</strong> crop that is your athlete — the same child usually appears
             more than once, and each one you add is more of the game they are followed through.
           </p>
+          {found === null ? null : <p class="notice">{found}</p>}
           <div class="candidate-grid">
-            {candidates.map((candidate) => (
-              <button
-                type="button"
-                class={`candidate${picked.includes(candidate.trackId) ? ' chosen' : ''}`}
-                key={candidate.trackId}
-                disabled={busy !== null}
-                onClick={() => toggle(candidate.trackId)}
-                title={`${candidate.seconds}s on screen, ${candidate.samples} samples, confidence ${candidate.confidence}`}
-              >
-                <span class="candidate-crop" style={cropStyle(candidate, base)} />
-                <span class="candidate-meta">
-                  {clock(candidate.previewTs)} · {candidate.seconds}s
-                </span>
-              </button>
-            ))}
+            {/* Matches first, so the ones needing a decision are not buried
+                halfway down a grid of forty strangers. */}
+            {[...candidates]
+              .sort((a, b) => (scores[b.trackId]?.score ?? -1) - (scores[a.trackId]?.score ?? -1))
+              .map((candidate) => {
+                const match = scores[candidate.trackId];
+                return (
+                  <button
+                    type="button"
+                    class={`candidate${picked.includes(candidate.trackId) ? ' chosen' : ''}`}
+                    key={candidate.trackId}
+                    disabled={busy !== null}
+                    onClick={() => toggle(candidate.trackId)}
+                    title={`${candidate.seconds}s on screen, ${candidate.samples} samples, confidence ${candidate.confidence}${
+                      match === undefined
+                        ? ''
+                        : ` — continues the previous fragment ${match.gapSeconds.toFixed(1)}s later, ` +
+                          `${match.distancePx}px away, shirt matches ${Math.round(match.score * 100)}%`
+                    }`}
+                  >
+                    <span class="candidate-crop" style={cropStyle(candidate, base)} />
+                    <span class="candidate-meta">
+                      {clock(candidate.previewTs)} · {candidate.seconds}s
+                      {match === undefined ? '' : ` · ${Math.round(match.score * 100)}%`}
+                    </span>
+                  </button>
+                );
+              })}
           </div>
           <div class="row" style="margin-top:.75rem;align-items:center;gap:.75rem">
             <button type="button" disabled={picked.length === 0 || busy !== null} onClick={() => void save()}>
               {busy === null
                 ? `Identify as my athlete (${picked.length} selected)`
                 : 'Saving…'}
+            </button>
+            {/* Only useful once they are bound somewhere: the search compares
+                against the tracks already saved for this athlete. */}
+            <button
+              type="button"
+              class="secondary"
+              disabled={athleteId === '' || finding || busy !== null}
+              onClick={() => void findRest()}
+              title="Search the rest of the footage for this athlete by the colour of their shirt"
+            >
+              {finding ? 'Searching the footage…' : 'Find them in the rest of the game'}
             </button>
             <span class="muted">{coverage}</span>
           </div>

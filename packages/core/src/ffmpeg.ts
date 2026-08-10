@@ -76,22 +76,41 @@ export interface RunResult {
 export const run = (
   binary: string,
   args: readonly string[],
-  options: { signal?: AbortSignal; onStderr?: (chunk: string) => void } = {},
+  options: {
+    signal?: AbortSignal;
+    onStderr?: (chunk: string) => void;
+    /**
+     * Written to the child's stdin, then closed. Some worker commands take a
+     * list of thousands of boxes, which is far past what an argv can carry.
+     */
+    stdin?: string;
+  } = {},
 ): Promise<RunResult> =>
   new Promise((resolve, reject) => {
-    const child = spawn(binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(binary, args, {
+      stdio: [options.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+    });
     let stdout = '';
     let stderr = '';
+
+    if (options.stdin !== undefined && child.stdin !== null) {
+      // A child that dies before reading it all would otherwise raise EPIPE and
+      // lose the real error, which is whatever it wrote to stderr.
+      child.stdin.on('error', () => undefined);
+      child.stdin.end(options.stdin);
+    }
 
     const abort = (): void => {
       child.kill('SIGTERM');
     };
     options.signal?.addEventListener('abort', abort, { once: true });
 
-    child.stdout.on('data', (chunk: Buffer) => {
+    // Optional chaining because the stdio tuple is now computed, which costs
+    // TypeScript the overload that guaranteed these were non-null.
+    child.stdout?.on('data', (chunk: Buffer) => {
       stdout += chunk.toString();
     });
-    child.stderr.on('data', (chunk: Buffer) => {
+    child.stderr?.on('data', (chunk: Buffer) => {
       const text = chunk.toString();
       stderr += text;
       options.onStderr?.(text);

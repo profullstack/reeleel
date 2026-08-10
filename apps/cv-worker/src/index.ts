@@ -3,7 +3,7 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { availableParallelism, cpus } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
-import { probe } from '@reeleel/core';
+import { probe, requireBinary } from '@reeleel/core';
 
 import {
   COCO_TO_SPORT,
@@ -13,6 +13,8 @@ import {
 } from './classes.js';
 import { DEFAULT_MODEL, defaultModelPath, fetchModel, resolveModelPath } from './models.js';
 import { runPipeline } from './pipeline.js';
+import { computeSignatures } from './signatures.js';
+import type { SignatureBox } from './signatures.js';
 
 /** Minimal flag parsing — the protocol is fixed and this has no users but us. */
 export const parseArgs = (argv: string[]): { command: string; flags: Record<string, string>; bare: Set<string> } => {
@@ -194,6 +196,75 @@ const detectAndTrack = async (flags: Record<string, string>): Promise<void> => {
   }
 };
 
+/** Reads the whole of stdin, which is how a box list arrives. */
+const readStdin = async (): Promise<string> => {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString('utf8');
+};
+
+/**
+ * Colour signatures for a list of boxes, so the host can tell whether two
+ * tracks are the same child. Boxes arrive on stdin because there can be
+ * thousands of them and an argv has limits.
+ */
+const appearance = async (flags: Record<string, string>): Promise<void> => {
+  const input = flags['input'];
+  if (input === undefined) {
+    emit({ error: '--input is required.' });
+    return;
+  }
+
+  let request: { boxes?: SignatureBox[] };
+  try {
+    request = JSON.parse(await readStdin()) as { boxes?: SignatureBox[] };
+  } catch (cause) {
+    emit({ error: `stdin was not the JSON box list this expects: ${String(cause)}` });
+    return;
+  }
+  const boxes = request.boxes ?? [];
+  if (boxes.length === 0) {
+    emit({ error: 'No boxes were given, so there is nothing to measure.' });
+    return;
+  }
+
+  const media = await probe(input);
+  const width = media.video?.width ?? 0;
+  const height = media.video?.height ?? 0;
+  if (width <= 0 || height <= 0) {
+    emit({ error: `${input} has no readable video stream.` });
+    return;
+  }
+
+  const controller = new AbortController();
+  const onSignal = (): void => controller.abort();
+  process.once('SIGINT', onSignal);
+  process.once('SIGTERM', onSignal);
+
+  try {
+    const started = Date.now();
+    const result = await computeSignatures({
+      input,
+      ffmpegPath: requireBinary('ffmpeg'),
+      sourceWidth: width,
+      sourceHeight: height,
+      fps: media.video?.fps ?? 0,
+      boxes,
+      samplesPerSecond: number(flags['samples-per-second'], 2),
+      decodeWidth: number(flags['decode-width'], 960),
+      signal: controller.signal,
+    });
+    process.stderr.write(
+      `signatures: ${Object.keys(result.signatures).length} track(s) from ` +
+        `${result.framesRead} frames in ${Math.round((Date.now() - started) / 1000)}s\n`,
+    );
+    emit({ signatures: result.signatures, pixels: result.pixels });
+  } finally {
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
+  }
+};
+
 const fetch = async (flags: Record<string, string>): Promise<void> => {
   const sport = flags['sport'] ?? 'soccer';
   const url = flags['url'] ?? DEFAULT_MODEL.url;
@@ -225,6 +296,9 @@ export const main = async (argv: string[]): Promise<number> => {
       case 'detect-and-track':
         await detectAndTrack(flags);
         return 0;
+      case 'appearance':
+        await appearance(flags);
+        return 0;
       case 'capabilities':
         capabilities();
         return 0;
@@ -233,7 +307,7 @@ export const main = async (argv: string[]): Promise<number> => {
         return 0;
       default:
         process.stderr.write(
-          'usage: reeleel-cv <detect-and-track|capabilities|fetch-model> [options]\n' +
+          'usage: reeleel-cv <detect-and-track|appearance|capabilities|fetch-model> [options]\n' +
             'see workers/cv/README.md for the protocol\n',
         );
         return command === 'help' ? 0 : 1;
