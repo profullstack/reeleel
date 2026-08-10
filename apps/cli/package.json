@@ -1,6 +1,6 @@
 {
   "name": "@reeleel/cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "The ReelEel command line. Same services as the desktop app, scriptable.",
   "license": "MIT",

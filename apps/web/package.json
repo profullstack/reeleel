@@ -1,6 +1,6 @@
 {
   "name": "@reeleel/web",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "private": true,
   "description": "ReelEel web app — Hono JSX server-rendered pages with client-side islands, backed by the ReelEel API.",
