@@ -348,6 +348,10 @@ export const ProjectPage: FC<ProjectView> = ({
               balanced
             </option>
             <option value="accurate">accurate</option>
+            {/* Slices each frame so the detector can resolve the ball. Five
+                inferences per frame instead of one, so the cost is stated
+                rather than discovered. */}
+            <option value="thorough">thorough — sees the ball, ~5x slower</option>
           </select>
           <button type="submit" disabled={videos.length === 0}>
             Analyze game

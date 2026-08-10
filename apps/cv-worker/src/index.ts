@@ -150,6 +150,8 @@ const detectAndTrack = async (flags: Record<string, string>): Promise<void> => {
       classes: requested,
       frameStride: number(flags['frame-stride'], 2),
       inferenceSize: number(flags['inference-size'], DEFAULT_MODEL.inputSize),
+      // Off unless asked for: it costs grid^2 + 1 inferences per frame.
+      tileGrid: number(flags['tile-grid'], 1),
       minConfidence: number(flags['min-confidence'], 0.3),
       iouThreshold: number(flags['iou'], 0.45),
       sourceWidth: width,
