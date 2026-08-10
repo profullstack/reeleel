@@ -1,6 +1,6 @@
 {
   "name": "@reeleel/db",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "Turso/libSQL clients and forward-only migrations for ReelEel. Local file by default, Turso when configured.",
   "license": "MIT",

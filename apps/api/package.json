@@ -1,6 +1,6 @@
 {
   "name": "@reeleel/api",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "private": true,
   "description": "ReelEel HTTP API (Hono). The same @reeleel/core services the CLI and desktop app use.",

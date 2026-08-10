@@ -1,6 +1,6 @@
 {
   "name": "@reeleel/cv-worker",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "private": true,
   "description": "ReelEel detection and tracking worker. Speaks the protocol in workers/cv/README.md.",
