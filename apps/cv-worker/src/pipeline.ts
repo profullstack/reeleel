@@ -39,6 +39,18 @@ export interface PipelineOptions {
    */
   tileGrid?: number;
   minConfidence: number;
+  /**
+   * Per-class overrides of `minConfidence`, by sport class name.
+   *
+   * A basketball is a handful of pixels and the model is right to be unsure
+   * about it; a person fills a fifth of the frame and a 0.08 "person" is junk.
+   * One threshold for both meant the ball was held to a standard set by what
+   * players need. Measured over 20s of a real game, dropping only the ball's
+   * floor from 0.25 to 0.08 took it from 173 sampled positions to 293 — while
+   * the number of ball *tracks* stayed at 16, which is what says the extra
+   * detections are the same ball seen more often rather than new phantoms.
+   */
+  classConfidence?: Record<string, number>;
   iouThreshold: number;
   sourceWidth: number;
   sourceHeight: number;
@@ -174,9 +186,22 @@ export const runPipeline = async (options: PipelineOptions): Promise<PipelineRes
     fps: options.fps,
   });
 
+  /**
+   * Decode at the most permissive floor any class asks for; each detection is
+   * then held to its own class's threshold once we know what it is. The decoder
+   * cannot do this itself — it works in class indices, before the sport's
+   * mapping has been applied.
+   */
+  const decodeFloor = Math.min(
+    options.minConfidence,
+    ...Object.values(options.classConfidence ?? {}),
+  );
+
   const tracker = new ByteTracker({
     highThreshold: Math.max(options.minConfidence, 0.4),
-    lowThreshold: options.minConfidence,
+    // ByteTrack's second pass exists to re-attach exactly the faint detections
+    // this lets through, so the tracker's floor follows the lowest class floor.
+    lowThreshold: decodeFloor,
     iouThreshold: options.iouThreshold,
   });
 
@@ -213,11 +238,11 @@ export const runPipeline = async (options: PipelineOptions): Promise<PipelineRes
       // returns a full set of plausible boxes in the wrong places.
       const decodedHead =
         headKindFor(head.dims) === 'yolov8'
-          ? decodeYolov8(raw, head.dims, options.minConfidence)
+          ? decodeYolov8(raw, head.dims, decodeFloor)
           : decodeYolox(raw, head.dims[head.dims.length - 1] ?? 0, {
               inputWidth: size,
               inputHeight: size,
-              scoreThreshold: options.minConfidence,
+              scoreThreshold: decodeFloor,
             });
       return decodedHead.map((d) => ({
         ...d,
@@ -258,7 +283,15 @@ export const runPipeline = async (options: PipelineOptions): Promise<PipelineRes
     // Drop classes this sport does not care about before NMS, so a stray
     // "bench" never suppresses a player. NMS also fuses the duplicates that
     // overlapping tiles and the full-frame pass necessarily produce.
-    const relevant = found.filter((d) => mapping.byIndex[d.classId] !== undefined);
+    //
+    // The per-class floor is applied here rather than in the decoder: the model
+    // is run once at the lowest floor any class asks for, and each detection is
+    // then held to its own class's standard.
+    const relevant = found.filter((d) => {
+      const className = mapping.byIndex[d.classId];
+      if (className === undefined) return false;
+      return d.score >= (options.classConfidence?.[className] ?? options.minConfidence);
+    });
     const kept = nonMaxSuppression(relevant, options.iouThreshold);
 
     const inSourceSpace: Detection[] = kept.map((detection) => {

@@ -43,6 +43,26 @@ const number = (value: string | undefined, fallback: number): number => {
 };
 
 /**
+ * `ball=0.08,hoop=0.15` — per-class detection floors.
+ *
+ * Malformed pairs are dropped rather than throwing: a typo in a preset should
+ * cost the ball some recall, not take a twenty-minute detection pass down with
+ * it.
+ */
+export const parseClassConfidence = (value: string | undefined): Record<string, number> => {
+  if (value === undefined || value.trim().length === 0) return {};
+  const out: Record<string, number> = {};
+  for (const pair of value.split(',')) {
+    const [name, raw] = pair.split('=');
+    const parsed = Number(raw);
+    if (name === undefined || name.trim().length === 0) continue;
+    if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 1) continue;
+    out[name.trim()] = parsed;
+  }
+  return out;
+};
+
+/**
  * How many threads onnxruntime should use for one inference.
  *
  * Left to itself (`intraOpNumThreads: 0`) onnxruntime sizes its pool from the
@@ -166,6 +186,7 @@ const detectAndTrack = async (flags: Record<string, string>): Promise<void> => {
       // Off unless asked for: it costs grid^2 + 1 inferences per frame.
       tileGrid: number(flags['tile-grid'], 1),
       minConfidence: number(flags['min-confidence'], 0.3),
+      classConfidence: parseClassConfidence(flags['class-confidence']),
       iouThreshold: number(flags['iou'], 0.45),
       sourceWidth: width,
       sourceHeight: height,

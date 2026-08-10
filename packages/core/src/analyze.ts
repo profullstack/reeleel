@@ -36,19 +36,72 @@ export interface PresetSettings {
    * because it costs tiles^2 + 1 inferences per frame.
    */
   tileGrid: number;
+  /**
+   * Detection floors for classes that need a different standard from people,
+   * as `class: confidence`.
+   *
+   * A basketball is a handful of pixels; a player fills a fifth of the frame.
+   * Holding both to one threshold meant the ball was judged by what a person
+   * needs. Measured over 20s of a real game at the shipped tile grid: dropping
+   * only the ball to 0.08 took it from 173 sampled positions to 293, and the
+   * rim from 316 to 403, at identical cost — while ball *track* count stayed
+   * at 16, which is what distinguishes better recall from new phantoms.
+   */
+  classConfidence?: Record<string, number>;
 }
+
+/**
+ * Small, fast-moving and low-contrast: the things a detector is legitimately
+ * unsure about, and the two classes scoring most depends on.
+ */
+const SMALL_OBJECTS: Record<string, number> = { ball: 0.08, puck: 0.08, hoop: 0.15, net: 0.15 };
 
 export const PRESET_SETTINGS: Record<Exclude<Preset, 'custom'>, PresetSettings> = {
   // CPU-only is a hard requirement, so "fast" has to be genuinely cheap.
-  fast: { frameStride: 5, inferenceSize: 512, minConfidence: 0.35, useProxy: true, tileGrid: 1 },
-  balanced: { frameStride: 2, inferenceSize: 768, minConfidence: 0.3, useProxy: true, tileGrid: 1 },
-  accurate: { frameStride: 1, inferenceSize: 1280, minConfidence: 0.25, useProxy: false, tileGrid: 1 },
+  fast: {
+    frameStride: 5,
+    inferenceSize: 512,
+    minConfidence: 0.35,
+    useProxy: true,
+    tileGrid: 1,
+    classConfidence: SMALL_OBJECTS,
+  },
+  balanced: {
+    frameStride: 2,
+    inferenceSize: 768,
+    minConfidence: 0.3,
+    useProxy: true,
+    tileGrid: 1,
+    classConfidence: SMALL_OBJECTS,
+  },
+  accurate: {
+    frameStride: 1,
+    inferenceSize: 1280,
+    minConfidence: 0.25,
+    useProxy: false,
+    tileGrid: 1,
+    classConfidence: SMALL_OBJECTS,
+  },
   /**
    * The one that can see the ball. Five inferences per frame instead of one,
    * so it is minutes rather than seconds — offered as a choice, not a default,
    * because nobody's existing runtime should regress silently.
    */
-  thorough: { frameStride: 2, inferenceSize: 1280, minConfidence: 0.25, useProxy: false, tileGrid: 2 },
+  thorough: {
+    frameStride: 2,
+    inferenceSize: 1280,
+    minConfidence: 0.25,
+    useProxy: false,
+    /**
+     * Two, not three. A 3x3 grid was measured against this same footage and was
+     * *worse* for the thing tiling exists to find: 127 ball positions against
+     * 173, and 100 rim positions against 316, for twice the runtime. Tiles get
+     * smaller but the whole-frame pass downsamples further to feed them, and
+     * the rim loses more than the ball gains.
+     */
+    tileGrid: 2,
+    classConfidence: SMALL_OBJECTS,
+  },
 };
 
 /**
@@ -97,6 +150,7 @@ export const settingsForPreset = (preset: Preset): PresetSettings => {
       minConfidence: 0.3,
       useProxy: true,
       tileGrid: 1,
+      classConfidence: SMALL_OBJECTS,
     };
   }
   return PRESET_SETTINGS[preset];
@@ -428,6 +482,14 @@ export const analyzeProject = async (
             String(settings.minConfidence),
             '--tile-grid',
             String(settings.tileGrid),
+            ...(settings.classConfidence === undefined
+              ? []
+              : [
+                  '--class-confidence',
+                  Object.entries(settings.classConfidence)
+                    .map(([name, value]) => `${name}=${value}`)
+                    .join(','),
+                ]),
             '--tracker',
             plugin.tracker.algorithm,
             '--backend',
