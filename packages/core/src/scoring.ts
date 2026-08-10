@@ -423,6 +423,26 @@ export const scoreWindow = (
   plugin: SportPlugin,
   ts: number,
 ): WindowScore => {
+  /**
+   * Once somebody has said which child is theirs, a moment they are not in is
+   * not their moment.
+   *
+   * Two of the seven signals — `activity_near_goal` and `high_motion` — read the
+   * whole scene and never look at the athlete at all. Between them they can
+   * clear the threshold on their own, so a run with an athlete identified for
+   * 51s of a 300s game returned seven moments of which five contained no trace
+   * of him: 49s, 68s, 158s, 175s, 182s, against an athlete on screen from 218s.
+   * Every one was a real scramble near the rim, and every one was somebody
+   * else's child. That is a highlight reel of the game, which is not the thing
+   * anyone came here for.
+   *
+   * Scene signals still contribute — a scramble the athlete is *in* is exactly
+   * what to keep — they simply cannot carry a window on their own any more.
+   */
+  if (context.focal !== null && focalAt(context, ts) === null) {
+    return { ts, score: 0, reasons: [] };
+  }
+
   const weights = ruleWeights(plugin);
   const reasons: string[] = [];
   let total = 0;
