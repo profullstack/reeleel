@@ -283,7 +283,6 @@ export const LandingPage: FC<{ signedIn: boolean }> = ({ signedIn }) => (
         </section>
 
         <footer>
-          <span>Your footage stays on your own server.</span>
           <span style="margin-left:auto">
             <a href={signedIn ? '/projects' : '/login'}>
               {signedIn ? 'Your projects' : 'Sign in'}
