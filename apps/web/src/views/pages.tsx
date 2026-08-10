@@ -453,6 +453,23 @@ export const ProjectPage: FC<ProjectView> = ({
                     <button type="submit">Reject</button>
                   </form>
                 </div>
+                {/* Watch it here. Deciding whether a five-second suggestion is
+                    any good used to mean keeping it, building clips, exporting
+                    and downloading a reel. `#t=start,end` plays exactly the
+                    span; `preload="none"` means nothing is fetched until the
+                    moment is opened, so a page of suggestions costs nothing. */}
+                {moment.videoId === null ? null : (
+                  <details style="margin-top:.5rem">
+                    <summary>Play {duration(moment.start)} → {duration(moment.end)}</summary>
+                    <video
+                      controls
+                      preload="none"
+                      playsinline
+                      style="width:100%;max-height:60vh;margin-top:.5rem;border-radius:.4rem;background:#000"
+                      src={`${base}/videos/${moment.videoId}/stream#t=${moment.start.toFixed(2)},${moment.end.toFixed(2)}`}
+                    />
+                  </details>
+                )}
               </div>
             ))}
           </div>

@@ -37,6 +37,9 @@ import {
   removeProject,
   removeVideo,
   renderReel,
+  createJob,
+  logJob,
+  updateJob,
   resolveProjectRoot,
   thumbnailPath,
   updateAthlete,
@@ -253,6 +256,45 @@ const startAnalysis = (
     .finally(() => {
       if (jobId !== null) runningAnalyses.delete(jobId);
     });
+};
+
+/**
+ * Renders a reel as a *job*, so it appears where every other long task does.
+ *
+ * Rendering was fired off with `void renderReel(...).catch(write to stderr)`.
+ * It worked — a 20-second reel landed on disk — and the person who asked for it
+ * saw nothing at all until they happened to reload the page, so "I did export
+ * reel and nothing" was a completely reasonable reading of a successful render.
+ * A failure would have been even quieter: the reason went to the server's
+ * stderr and nowhere else.
+ */
+const startRender = (root: string, name: string, aspect: AspectRatio): void => {
+  void (async () => {
+    const job = await createJob(root, 'render', { name, aspect });
+    try {
+      await updateJob(root, job.id, { status: 'running', stage: 'render', progress: 0.05 });
+      await logJob(root, job.id, `rendering "${name}" at ${aspect}`);
+
+      const result = await renderReel(root, name, {
+        aspect,
+        onProgress: (message) => {
+          void logJob(root, job.id, message);
+        },
+      });
+
+      await logJob(
+        root,
+        job.id,
+        `done: ${path.basename(result.outputPath)} — ${result.clipCount} clip(s), ` +
+          `${result.durationSeconds.toFixed(1)}s, ready under Exports`,
+      );
+      await updateJob(root, job.id, { status: 'completed', stage: 'done', progress: 1 });
+    } catch (error) {
+      // Said out loud, on the job, where the person who asked is looking.
+      await logJob(root, job.id, `render failed: ${failed(error)}`, 'error');
+      await updateJob(root, job.id, { status: 'failed', stage: 'render', error: failed(error) });
+    }
+  })();
 };
 
 export const registerActions = (app: Hono): void => {
@@ -666,6 +708,61 @@ export const registerActions = (app: Hono): void => {
       return c.body(Readable.toWeb(createReadStream(resolved)) as ReadableStream);
     } catch (error) {
       return back(c, to, undefined, failed(error));
+    }
+  });
+
+  /**
+   * Streams a video so a suggested moment can be watched where it was
+   * suggested.
+   *
+   * Judging a five-second suggestion used to mean keeping it, building clips,
+   * exporting, and downloading a reel — a minutes-long round trip to answer
+   * "is this any good?", which is a question you have to ask of every moment.
+   *
+   * Range requests are the whole point: without them a browser cannot seek, so
+   * playing a moment three minutes in would mean downloading the three minutes
+   * before it. The proxy is preferred over the source for the same reason —
+   * 47MB rather than 198MB, and it is already on disk.
+   */
+  app.get('/projects/:ref/videos/:id/stream', async (c) => {
+    try {
+      const root = await rootOf(c);
+      const video = (await listVideos(root)).find((entry) => entry.id === c.req.param('id'));
+      if (video === undefined) return c.text('No such video', 404);
+
+      const file =
+        video.proxyPath !== null && video.proxyPath !== undefined && existsSync(video.proxyPath)
+          ? video.proxyPath
+          : video.path;
+      if (!existsSync(file)) return c.text('That footage is no longer on disk', 404);
+
+      const size = statSync(file).size;
+      const range = c.req.header('range');
+      c.header('accept-ranges', 'bytes');
+      c.header('content-type', 'video/mp4');
+
+      const match = range === undefined ? null : /^bytes=(\d*)-(\d*)$/.exec(range.trim());
+      if (match === null) {
+        c.header('content-length', String(size));
+        return c.body(Readable.toWeb(createReadStream(file)) as ReadableStream);
+      }
+
+      // An open-ended range ("bytes=1000-") is what a seeking player sends.
+      const start = match[1] === '' ? 0 : Number(match[1]);
+      const end = match[2] === '' ? size - 1 : Math.min(Number(match[2]), size - 1);
+      if (!Number.isFinite(start) || start > end || start >= size) {
+        c.header('content-range', `bytes */${size}`);
+        return c.body(null, 416);
+      }
+
+      c.header('content-range', `bytes ${start}-${end}/${size}`);
+      c.header('content-length', String(end - start + 1));
+      return c.body(
+        Readable.toWeb(createReadStream(file, { start, end })) as ReadableStream,
+        206,
+      );
+    } catch (error) {
+      return c.text(failed(error), 500);
     }
   });
 
@@ -1099,11 +1196,9 @@ export const registerActions = (app: Hono): void => {
       } catch {
         // Already exists — reuse it.
       }
-      void renderReel(root, name, { aspect }).catch((error: unknown) => {
-        process.stderr.write(`render failed: ${failed(error)}\n`);
-      });
+      startRender(root, name, aspect);
 
-      return back(c, to, 'Rendering started — the file appears under exports when done');
+      return back(c, to, 'Rendering — progress appears in the job log, then under Exports');
     } catch (error) {
       return back(c, to, undefined, failed(error));
     }
