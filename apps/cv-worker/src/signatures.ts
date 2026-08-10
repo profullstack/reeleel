@@ -51,6 +51,30 @@ export const frameIndexFor = (ts: number, fps: number, stride: number): number =
   Math.max(0, Math.round((ts * fps) / stride) * stride);
 
 /**
+ * How to decode, and what to multiply a box by once decoded.
+ *
+ * `sourceWidth`/`sourceHeight` are the space the *boxes* are in, which is not
+ * necessarily the size of the file being read: tracks are stored in
+ * source-video pixels while this usually reads the 540p proxy. Taking the space
+ * from the decoded file instead scaled every crop by 1 and put every torso rect
+ * somewhere off the right-hand edge, which produced empty signatures and a
+ * confident zero matches.
+ */
+export const decodePlanFor = (
+  sourceWidth: number,
+  sourceHeight: number,
+  requestedWidth: number,
+): { decodeWidth: number; decodeHeight: number; scale: number } => {
+  const decodeWidth = Math.min(requestedWidth, Math.max(1, sourceWidth));
+  const scale = sourceWidth > 0 ? decodeWidth / sourceWidth : 1;
+  return {
+    decodeWidth,
+    decodeHeight: Math.max(2, Math.round(sourceHeight * scale)),
+    scale,
+  };
+};
+
+/**
  * Colour signatures for a set of tracks, from one pass over the video.
  *
  * Runs on whatever file it is given — the 540p proxy is deliberate and
@@ -64,9 +88,11 @@ export const computeSignatures = async (
   const perSecond = request.samplesPerSecond ?? 2;
   const stride = Math.max(1, Math.round(fps / perSecond));
 
-  const decodeWidth = Math.min(request.decodeWidth ?? 960, request.sourceWidth);
-  const scale = request.sourceWidth > 0 ? decodeWidth / request.sourceWidth : 1;
-  const decodeHeight = Math.max(2, Math.round(request.sourceHeight * scale));
+  const { decodeWidth, decodeHeight, scale } = decodePlanFor(
+    request.sourceWidth,
+    request.sourceHeight,
+    request.decodeWidth ?? 960,
+  );
 
   // Boxes bucketed by the frame they will be measured on, so each decoded frame
   // is a single lookup rather than a scan of every box.

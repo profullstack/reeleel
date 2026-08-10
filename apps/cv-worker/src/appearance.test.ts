@@ -9,6 +9,7 @@ import {
   toHsv,
   torsoRect,
 } from './appearance.js';
+import { decodePlanFor } from './signatures.js';
 
 /**
  * The safety property under all of this: a signature that cannot tell two teams
@@ -92,6 +93,39 @@ describe('the torso crop', () => {
   it('refuses a box with nothing left in frame rather than inventing a sliver', () => {
     expect(torsoRect({ x: -500, y: 0, w: 100, h: 200 }, 1, 960, 540)).toBeNull();
     expect(torsoRect({ x: 0, y: 0, w: 1, h: 1 }, 1, 960, 540)).toBeNull();
+  });
+});
+
+describe('deciding what to decode, and at what scale', () => {
+  it('scales boxes from their own space, not from the file being read', () => {
+    /**
+     * The bug this exists for: tracks are in source-video pixels (1920x1080)
+     * while the file read is the 540p proxy. Deriving the space from the proxy
+     * scaled every crop by 1, put every torso off the right edge of the frame,
+     * and returned a confident zero matches on footage with eight to find.
+     */
+    const plan = decodePlanFor(1920, 1080, 960);
+    expect(plan.decodeWidth).toBe(960);
+    expect(plan.decodeHeight).toBe(540);
+    expect(plan.scale).toBe(0.5);
+  });
+
+  it('never upscales past the footage it was given', () => {
+    const plan = decodePlanFor(640, 360, 960);
+    expect(plan.decodeWidth).toBe(640);
+    expect(plan.scale).toBe(1);
+  });
+
+  it('keeps the aspect ratio, so a box’s y scales like its x', () => {
+    const plan = decodePlanFor(1440, 1080, 720);
+    expect(plan.scale).toBe(0.5);
+    expect(plan.decodeHeight).toBe(540);
+  });
+
+  it('survives a video with no readable width instead of dividing by zero', () => {
+    const plan = decodePlanFor(0, 0, 960);
+    expect(Number.isFinite(plan.scale)).toBe(true);
+    expect(plan.decodeHeight).toBeGreaterThan(0);
   });
 });
 
