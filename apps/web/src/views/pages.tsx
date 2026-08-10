@@ -467,6 +467,25 @@ export const ProjectPage: FC<ProjectView> = ({
                     and downloading a reel. `#t=start,end` plays exactly the
                     span; `preload="none"` means nothing is fetched until the
                     moment is opened, so a page of suggestions costs nothing. */}
+                {/* The only thing here that knows what actually happened.
+                    Detection knows a ball was near a player; you know it was a
+                    steal. The announcer reads this when it is set. */}
+                <form
+                  method="post"
+                  action={`${base}/moments/${moment.id}/title`}
+                  class="row"
+                  style="margin-top:.5rem;gap:.5rem"
+                >
+                  <input
+                    name="title"
+                    type="text"
+                    value={moment.title ?? ''}
+                    placeholder="What happened here? e.g. “Sam steals it at half court”"
+                    style="flex:1;min-width:14rem"
+                  />
+                  <button type="submit">Save name</button>
+                </form>
+
                 {moment.videoId === null ? null : (
                   /* Visible, not folded away. Twice now something necessary has
                      been hidden behind a <summary> and gone unnoticed for
@@ -558,6 +577,16 @@ export const ProjectPage: FC<ProjectView> = ({
               style="max-width:5rem"
             />
             <span class="muted">seconds, each end of every clip</span>
+          </div>
+          <div class="row" style="margin-top:.5rem">
+            <label style="margin:0;display:flex;align-items:center;gap:.4rem">
+              <input type="checkbox" name="announcer" value="1" />
+              Announcer commentary
+            </label>
+            <span class="muted">
+              Reads each moment's name aloud over the clip. Moments without a name get a plain
+              line — it never invents a shot or a score.
+            </span>
           </div>
         </form>
 

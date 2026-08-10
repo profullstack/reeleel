@@ -39,6 +39,13 @@ import {
   removeProject,
   removeVideo,
   renderReel,
+  aiScript,
+  templateScript,
+  speak,
+  voiceApiKey,
+  listClips,
+  listMoments,
+  readManifest,
   createJob,
   logJob,
   updateJob,
@@ -274,7 +281,12 @@ const startRender = (
   root: string,
   name: string,
   aspect: AspectRatio,
-  polish: { musicPath?: string; musicVolume?: number; fadeSeconds?: number } = {},
+  polish: {
+    musicPath?: string;
+    musicVolume?: number;
+    fadeSeconds?: number;
+    announcer?: boolean;
+  } = {},
 ): void => {
   void (async () => {
     const job = await createJob(root, 'render', { name, aspect, ...polish });
@@ -287,9 +299,69 @@ const startRender = (
           (polish.musicPath === undefined ? '' : ` with ${path.basename(polish.musicPath)} underneath`),
       );
 
+      /**
+       * Commentary, when asked for. Everything here degrades rather than
+       * fails: no key means no announcer, a refused or failed script means
+       * template lines, and a line that will not synthesise is skipped. A reel
+       * must never fail to render because a third-party voice service is down.
+       */
+      const voiceOver: { path: string; startSeconds: number }[] = [];
+      if (polish.announcer === true) {
+        const voiceKey = voiceApiKey();
+        if (voiceKey === null) {
+          await logJob(
+            root,
+            job.id,
+            'announcer: no ELEVENLABS_API_KEY configured, rendering without commentary',
+            'warn',
+          );
+        } else {
+          const [clips, moments, athletes, manifest] = await Promise.all([
+            listClips(root),
+            listMoments(root, { limit: 500 }),
+            listAthletes(root),
+            Promise.resolve(readManifest(root)),
+          ]);
+          const context = {
+            athleteName: athletes.find((a) => a.isFocal)?.name ?? athletes[0]?.name ?? null,
+            sport: manifest.sport,
+            projectName: manifest.name,
+          };
+
+          const aiKey = process.env['ANTHROPIC_API_KEY'];
+          const lines =
+            aiKey === undefined || aiKey.length === 0
+              ? templateScript(clips, moments, context)
+              : await aiScript(clips, moments, context, {
+                  apiKey: aiKey,
+                  onProgress: (message) => void logJob(root, job.id, message, 'warn'),
+                });
+
+          const written = lines.filter((line) => line.fromTitle).length;
+          await logJob(
+            root,
+            job.id,
+            `announcer: ${lines.length} line(s), ${written} from titles you wrote`,
+          );
+
+          const voiceDir = projectDir(root, 'music');
+          for (const line of lines) {
+            try {
+              const audio = await speak(line.text, voiceDir, { apiKey: voiceKey });
+              voiceOver.push({ path: audio, startSeconds: line.startSeconds });
+              await logJob(root, job.id, `announcer: “${line.text}”`);
+            } catch (error) {
+              await logJob(root, job.id, `announcer: ${failed(error)}`, 'warn');
+            }
+          }
+        }
+      }
+
+      const { announcer: _announcer, ...renderPolish } = polish;
       const result = await renderReel(root, name, {
         aspect,
-        ...polish,
+        ...renderPolish,
+        ...(voiceOver.length > 0 ? { voiceOver } : {}),
         onProgress: (message) => {
           void logJob(root, job.id, message);
         },
@@ -879,6 +951,30 @@ export const registerActions = (app: Hono): void => {
     }
   });
 
+  /**
+   * Names a moment.
+   *
+   * The one thing in the system that knows what actually happened. Detection
+   * knows a ball was near a player; only the person who was there knows it was
+   * a steal. The announcer builds its line around this when it is present and
+   * falls back to something deliberately plain when it is not.
+   */
+  app.post('/projects/:ref/moments/:id/title', async (c) => {
+    const bad = await guard(c);
+    if (bad !== null) return bad;
+    const ref = c.req.param('ref') ?? '';
+    const to = `/projects/${encodeURIComponent(ref)}`;
+
+    try {
+      const root = await rootOf(c);
+      const title = field(await c.req.parseBody(), 'title').slice(0, 200);
+      await updateMoment(root, c.req.param('id') ?? '', { title: title.length === 0 ? null : title });
+      return back(c, to, title.length === 0 ? 'Title cleared' : `Saved “${title}”`);
+    } catch (error) {
+      return back(c, to, undefined, failed(error));
+    }
+  });
+
   /** Removes one export. Older versions are kept, so this has to be possible. */
   app.post('/projects/:ref/exports/:id/delete', async (c) => {
     const bad = await guard(c);
@@ -1327,6 +1423,7 @@ export const registerActions = (app: Hono): void => {
       const fade = Number(field(body, 'fadeSeconds'));
 
       startRender(root, name, aspect, {
+        ...(field(body, 'announcer') === '1' ? { announcer: true } : {}),
         ...(musicPath === undefined ? {} : { musicPath }),
         ...(Number.isFinite(volume) && volume >= 0 && volume <= 1 ? { musicVolume: volume } : {}),
         ...(Number.isFinite(fade) && fade >= 0 && fade <= 3 ? { fadeSeconds: fade } : {}),

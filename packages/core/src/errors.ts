@@ -25,6 +25,8 @@ export type ReelEelErrorCode =
   | 'OUT_OF_MEMORY'
   | 'JOB_CANCELED'
   | 'RENDER_INTERRUPTED'
+  /** Text-to-speech failed; the reel still renders without commentary. */
+  | 'VOICE_FAILED'
   | 'UNSUPPORTED_OPERATION';
 
 export interface ReelEelErrorOptions {

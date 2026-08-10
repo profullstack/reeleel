@@ -23,6 +23,19 @@ import { getVideo, listVideos } from './videos.js';
  */
 export const DEFAULT_MUSIC_VOLUME = 0.18;
 
+/**
+ * How far the game and the music step back while the announcer speaks.
+ *
+ * The game only dips — the crowd under commentary is what makes it sound like
+ * a broadcast rather than a voice memo. Music ducks much harder, because
+ * nothing is lost by it.
+ */
+export const GAME_DUCK_LEVEL = 0.35;
+export const MUSIC_DUCK_LEVEL = 0.08;
+
+/** How long a spoken line is assumed to run, for scheduling the duck. */
+export const VOICE_DUCK_SECONDS = 3.5;
+
 const CRF_FOR_QUALITY: Record<'low' | 'medium' | 'high', number> = {
   low: 28,
   medium: 23,
@@ -266,6 +279,11 @@ export interface RenderReelOptions {
   musicVolume?: number;
   /** Seconds of fade on each clip. 0 turns it off. */
   fadeSeconds?: number;
+  /**
+   * Spoken commentary to lay over the reel, with the seconds into the reel at
+   * which each line starts. The game audio and any music duck underneath.
+   */
+  voiceOver?: { path: string; startSeconds: number }[];
   signal?: AbortSignal;
   onProgress?: (stage: string) => void;
 }
@@ -347,13 +365,11 @@ export const renderReel = async (
     const args = ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', listFile];
 
     /**
-     * Music under the game audio, not instead of it.
+     * The audio graph, built once so input indices stay in step.
      *
-     * The crowd, the squeak of shoes and a parent shouting are most of why the
-     * clip is worth keeping, so the bed sits well below them and the game stays
-     * at full level. It is looped because a reel is usually longer than
-     * whatever was uploaded, trimmed to the reel with `duration=first`, and
-     * faded at the end so it stops rather than being cut off mid-bar.
+     * Input 0 is the concatenated footage. Music, if any, is input 1. Each
+     * commentary line is its own input after that — the order here *is* the
+     * index arithmetic below, so nothing may be pushed out of sequence.
      */
     const music = options.musicPath;
     const hasMusic = music !== undefined && music.length > 0;
@@ -363,25 +379,73 @@ export const renderReel = async (
           hint: 'Upload it again, or render without music.',
         });
       }
+      // Looped because a reel is usually longer than whatever was uploaded.
       args.push('-stream_loop', '-1', '-i', music);
     }
+
+    const voice = (options.voiceOver ?? []).filter((line) => existsSync(line.path));
+    const hasVoice = voice.length > 0;
+    for (const line of voice) args.push('-i', line.path);
 
     const totalSeconds = clips.reduce((sum, clip) => sum + (clip.end - clip.start), 0);
     const musicFade = Math.min(2, totalSeconds / 4);
     const volume = options.musicVolume ?? DEFAULT_MUSIC_VOLUME;
 
+    const chains: string[] = [];
+    const mixInputs: string[] = [];
+
+    /**
+     * The game itself. It ducks while the announcer speaks — scheduled from the
+     * known line timings rather than detected with a sidechain compressor,
+     * which is cheaper and, more importantly, predictable: the duck lands in
+     * exactly the same place every render.
+     */
+    const duck = (label: string, source: string, floor: number): void => {
+      if (!hasVoice) {
+        chains.push(`${source}anull${label}`);
+        return;
+      }
+      const windows = voice
+        .map((line, index) => {
+          const from = Math.max(0, line.startSeconds - 0.15);
+          // Generous tail: a line running longer than estimated must not have
+          // the crowd swell back over its last few words.
+          const to = line.startSeconds + VOICE_DUCK_SECONDS;
+          return `volume=${floor.toFixed(3)}:enable='between(t,${from.toFixed(2)},${to.toFixed(2)})'${index === voice.length - 1 ? '' : ','}`;
+        })
+        .join('');
+      chains.push(`${source}${windows}${label}`);
+    };
+
+    duck('[game]', '[0:a]', GAME_DUCK_LEVEL);
+    mixInputs.push('[game]');
+
     if (hasMusic) {
-      const chain = [
-        `[1:a]volume=${volume.toFixed(3)}`,
-        `afade=t=out:st=${Math.max(0, totalSeconds - musicFade).toFixed(3)}:d=${musicFade.toFixed(3)}[bed]`,
-      ].join(',');
-      // `duration=first` ends the mix with the footage; the looped bed would
-      // otherwise run for ever.
-      const complex =
-        filters.length > 0
-          ? `[0:v]${filters.join(',')}[v];${chain};[0:a][bed]amix=inputs=2:duration=first:dropout_transition=0[a]`
-          : `${chain};[0:a][bed]amix=inputs=2:duration=first:dropout_transition=0[a]`;
-      args.push('-filter_complex', complex);
+      chains.push(
+        `[1:a]volume=${volume.toFixed(3)},` +
+          `afade=t=out:st=${Math.max(0, totalSeconds - musicFade).toFixed(3)}:d=${musicFade.toFixed(3)}[bedraw]`,
+      );
+      // Music ducks harder than the game: losing the crowd is a real loss,
+      // losing two seconds of a backing track is not.
+      duck('[bed]', '[bedraw]', MUSIC_DUCK_LEVEL);
+      mixInputs.push('[bed]');
+    }
+
+    voice.forEach((line, index) => {
+      const input = (hasMusic ? 2 : 1) + index;
+      // adelay wants milliseconds, and `all=1` so both channels shift together.
+      const delay = Math.max(0, Math.round(line.startSeconds * 1000));
+      chains.push(`[${input}:a]adelay=${delay}:all=1[vo${index}]`);
+      mixInputs.push(`[vo${index}]`);
+    });
+
+    const needsAudioGraph = hasMusic || hasVoice;
+    if (needsAudioGraph) {
+      // `duration=first` ends the mix with the footage; a looped bed or a
+      // trailing line would otherwise run past the picture.
+      const mix = `${mixInputs.join('')}amix=inputs=${mixInputs.length}:duration=first:dropout_transition=0:normalize=0[a]`;
+      const video = filters.length > 0 ? `[0:v]${filters.join(',')}[v];` : '';
+      args.push('-filter_complex', `${video}${chains.join(';')};${mix}`);
       args.push('-map', filters.length > 0 ? '[v]' : '0:v', '-map', '[a]');
       args.push('-c:v', filters.length > 0 ? 'libx264' : 'copy');
       if (filters.length > 0) args.push('-crf', String(CRF_FOR_QUALITY[options.quality ?? 'high']));
@@ -389,7 +453,7 @@ export const renderReel = async (
     } else if (filters.length > 0) {
       args.push('-vf', filters.join(','), '-c:v', 'libx264', '-crf', String(CRF_FOR_QUALITY[options.quality ?? 'high']), '-c:a', 'aac');
     } else {
-      // No overlay and no music means no re-encode — fast and lossless.
+      // No overlay, no music, no commentary: no re-encode at all.
       args.push('-c', 'copy');
     }
     args.push('-movflags', '+faststart', outputPath);
