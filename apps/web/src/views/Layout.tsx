@@ -116,6 +116,22 @@ const STYLES = `
   .log-error .log-message { color: var(--reject); }
   @media (prefers-reduced-motion: reduce) { .live-live::before { animation: none; } }
 
+  /* ── Identify your athlete ─────────────────────────────────────────────── */
+  .candidate-grid {
+    display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .5rem;
+  }
+  .candidate {
+    display: flex; flex-direction: column; align-items: center; gap: .25rem;
+    padding: .3rem; border: 1px solid var(--line); border-radius: .5rem;
+    background: var(--card); cursor: pointer;
+  }
+  .candidate:hover { border-color: var(--accent); }
+  .candidate.chosen { border-color: var(--keep); border-width: 2px; }
+  .candidate-crop {
+    display: block; border-radius: .3rem; background-color: var(--line);
+  }
+  .candidate-meta { font-size: .7rem; color: var(--muted); }
+
   .stored-uploads { margin-top: 1.25rem; padding-top: .5rem; border-top: 1px solid var(--line); }
   .stored-uploads h3 { font-size: .9rem; margin: .5rem 0; color: var(--muted); font-weight: 600; }
   progress {

@@ -283,6 +283,29 @@ export const ProjectPage: FC<ProjectView> = ({
         </form>
       </details>
 
+      {/* The one irreducibly manual step: a detector cannot know which player
+          is yours. Until an athlete is bound to a track, scoring has no focal
+          signal and cannot reach its own threshold. Replaced by a grid of
+          cropped frames on mount; without JavaScript it stays a plain form. */}
+      <details class="card" open={athletes.length > 0}>
+        <summary>Identify your athlete</summary>
+        <div id="identify-athlete" data-base={base} style="margin-top:.75rem">
+          <p class="muted">
+            Run analysis first, then pick which tracked player is your athlete. Without that,
+            scoring has nothing to follow and will suggest nothing.
+          </p>
+          {athletes.length === 0 ? null : (
+            <form method="post" action={`${base}/athletes/${athletes[0]?.id ?? ''}/track`}>
+              <div class="field">
+                <label for="trackId">Track id</label>
+                <input id="trackId" name="trackId" type="text" placeholder="trk_…" />
+              </div>
+              <button type="submit">Bind to {athletes[0]?.name ?? 'athlete'}</button>
+            </form>
+          )}
+        </div>
+      </details>
+
       <h2>Analysis</h2>
       <form method="post" action={`${base}/analyze`} class="card">
         <div class="row">

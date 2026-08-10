@@ -8,6 +8,7 @@
 export * from './analyze.js';
 export * from './athletes.js';
 export * from './camera.js';
+export * from './candidates.js';
 export * from './clips.js';
 export * from './config.js';
 export * from './dataset.js';
