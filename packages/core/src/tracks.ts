@@ -1,4 +1,4 @@
-import { all, execute, get, projectDb, toNumber } from './db.js';
+import { all, changes, execute, get, projectDb, toNumber } from './db.js';
 import { ReelEelError, notFound } from './errors.js';
 import { newId, nowIso } from './ids.js';
 import type { TrackSample, TrackSeries } from './scoring.js';
@@ -179,6 +179,86 @@ export const removeTrack = async (root: string, trackId: string): Promise<void> 
   const existing = await get<{ id: string }>(db, 'SELECT id FROM tracks WHERE id = ?', [trackId]);
   if (existing === undefined) throw notFound('Track', trackId);
   await execute(db, 'DELETE FROM tracks WHERE id = ?', [trackId]);
+};
+
+/**
+ * Assigns exactly this set of tracks to an athlete, clearing any previous
+ * assignment. `tracks.athlete_id` already existed and nothing wrote it; it is
+ * the natural home for "these fragments are all the same child", which one
+ * `focal_track_id` cannot express.
+ */
+export const assignTracksToAthlete = async (
+  root: string,
+  athleteId: string,
+  trackIds: string[],
+): Promise<number> => {
+  const db = await projectDb(root);
+  await execute(db, 'UPDATE tracks SET athlete_id = NULL WHERE athlete_id = ?', [athleteId]);
+  let assigned = 0;
+  for (const trackId of trackIds) {
+    const result = await execute(db, 'UPDATE tracks SET athlete_id = ?, updated_at = ? WHERE id = ?', [
+      athleteId,
+      nowIso(),
+      trackId,
+    ]);
+    assigned += changes(result);
+  }
+  return assigned;
+};
+
+/** Every track assigned to an athlete, in the order they appear on screen. */
+export const tracksForAthlete = async (root: string, athleteId: string): Promise<string[]> => {
+  const db = await projectDb(root);
+  const rows = await all<{ id: string }>(
+    db,
+    'SELECT id FROM tracks WHERE athlete_id = ? ORDER BY start_frame',
+    [athleteId],
+  );
+  return rows.map((row) => row.id);
+};
+
+export interface ClearTracksResult {
+  removed: number;
+  /** Athletes whose focal binding pointed at a track that no longer exists. */
+  unboundAthletes: string[];
+}
+
+/**
+ * Discards a video's tracks so a re-run replaces them instead of piling on.
+ *
+ * Detection appended unconditionally, so every re-analysis layered another copy
+ * of every track over the last — a project analysed six times scored against six
+ * overlapping sets of the same players, including the sets produced by runs that
+ * were later found to be broken. It made `others` six times too crowded, gave
+ * `find` an arbitrary stale fragment when it wanted "the ball", and grew without
+ * bound.
+ *
+ * `focal_track_id` is a bare column with no foreign key, so it has to be cleared
+ * by hand or it dangles at a deleted row and scoring silently loses its anchor.
+ * Callers are expected to tell the user their athlete needs re-identifying.
+ */
+export const clearTracks = async (root: string, videoId: string): Promise<ClearTracksResult> => {
+  const db = await projectDb(root);
+  const doomed = await all<{ id: string }>(db, 'SELECT id FROM tracks WHERE video_id = ?', [
+    videoId,
+  ]);
+  if (doomed.length === 0) return { removed: 0, unboundAthletes: [] };
+
+  const ids = new Set(doomed.map((row) => row.id));
+  const bound = await all<{ id: string; focal_track_id: string | null }>(
+    db,
+    'SELECT id, focal_track_id FROM athletes WHERE focal_track_id IS NOT NULL',
+  );
+  const unboundAthletes = bound
+    .filter((row) => row.focal_track_id !== null && ids.has(row.focal_track_id))
+    .map((row) => row.id);
+
+  await execute(db, 'DELETE FROM tracks WHERE video_id = ?', [videoId]);
+  for (const athleteId of unboundAthletes) {
+    await execute(db, 'UPDATE athletes SET focal_track_id = NULL WHERE id = ?', [athleteId]);
+  }
+
+  return { removed: doomed.length, unboundAthletes };
 };
 
 /** Fuses `sourceId` into `targetId` — the annotator's "merge tracks" action. */

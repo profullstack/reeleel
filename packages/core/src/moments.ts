@@ -5,7 +5,7 @@ import { newId, nowIso } from './ids.js';
 import { readManifest } from './projects.js';
 import { computeMoments, explainScoring } from './scoring.js';
 import type { ScoringDiagnosis, ScoringInput } from './scoring.js';
-import { loadTrackSeries } from './tracks.js';
+import { loadTrackSeries, tracksForAthlete } from './tracks.js';
 import type { SuggestedMoment } from './types.js';
 import { listVideos } from './videos.js';
 
@@ -283,6 +283,15 @@ export const generateMoments = async (
       focalTrackId: focal?.focalTrackId ?? null,
       tracks,
     };
+    /**
+     * Prefer the full set of fragments the user picked. One `focal_track_id`
+     * covered 24 seconds of a five-minute game, because the tracker had split
+     * that child into pieces and only one piece was bound.
+     */
+    if (focal !== null) {
+      const assigned = await tracksForAthlete(root, focal.id);
+      if (assigned.length > 0) input.focalTrackIds = assigned;
+    }
     if (options.windowSeconds !== undefined) input.windowSeconds = options.windowSeconds;
 
     diagnoses.push({ videoId: video.id, diagnosis: explainScoring(input, plugin) });
