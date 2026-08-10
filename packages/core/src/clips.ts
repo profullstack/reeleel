@@ -1,6 +1,6 @@
 import { existsSync, rmSync } from 'node:fs';
 
-import { all, execute, get, projectDb, toNumber } from './db.js';
+import { all, changes, execute, get, projectDb, toNumber } from './db.js';
 import { invalidInput, notFound } from './errors.js';
 import { newId, nowIso } from './ids.js';
 import { listMoments } from './moments.js';
@@ -12,6 +12,7 @@ interface ClipRow {
   id: string;
   project_id: string;
   moment_id: string | null;
+  manual: number;
   video_id: string | null;
   start_ts: number;
   end_ts: number;
@@ -27,6 +28,7 @@ const toClip = (row: ClipRow): Clip => ({
   id: row.id,
   projectId: row.project_id,
   momentId: row.moment_id,
+  manual: toNumber(row.manual) === 1,
   videoId: row.video_id,
   start: toNumber(row.start_ts),
   end: toNumber(row.end_ts),
@@ -46,6 +48,8 @@ export interface AddClipInput {
   end: number;
   videoId?: string | null;
   momentId?: string | null;
+  /** A clip the user made or kept, which regeneration must not delete. */
+  manual?: boolean;
   cameraMode?: CameraMode;
   title?: string;
   order?: number;
@@ -67,8 +71,8 @@ export const addClip = async (root: string, input: AddClipInput): Promise<Clip> 
   await execute(
     db,
     `INSERT INTO clips
-       (id, project_id, moment_id, video_id, start_ts, end_ts, sort_order, camera_mode, title, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, project_id, moment_id, video_id, start_ts, end_ts, sort_order, camera_mode, title, manual, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       manifest.id,
@@ -79,6 +83,7 @@ export const addClip = async (root: string, input: AddClipInput): Promise<Clip> 
       input.order ?? toNumber(maxRow?.n ?? -1) + 1,
       input.cameraMode ?? 'follow-player',
       input.title ?? null,
+      input.manual === true ? 1 : 0,
       timestamp,
       timestamp,
     ],
@@ -200,13 +205,23 @@ export const clipsFromMoments = async (
     options.includeUndecided === true ? moment.included !== false : moment.included === true,
   );
 
-  const existing = new Set(
-    (await listClips(root)).map((clip) => clip.momentId).filter((id): id is string => id !== null),
-  );
+  /**
+   * Derived clips are replaced, not accumulated.
+   *
+   * Deduplicating on momentId could never work: re-scoring deletes every
+   * non-manual moment before regenerating, and clips.moment_id is ON DELETE SET
+   * NULL, so the id this used to match on was nulled out from under it. Each
+   * run appended another copy — one project reached sixteen clips against a
+   * single moment, three of them identical.
+   *
+   * Clips the user made or kept are marked manual and survive untouched.
+   */
+  const db = await projectDb(root);
+  const removed = await execute(db, 'DELETE FROM clips WHERE manual = 0');
+  const replaced = changes(removed);
 
   const created: Clip[] = [];
   for (const moment of moments) {
-    if (existing.has(moment.id)) continue;
     const input: AddClipInput = {
       start: moment.start,
       end: moment.end,
@@ -216,6 +231,10 @@ export const clipsFromMoments = async (
     };
     if (moment.title !== null) input.title = moment.title;
     created.push(await addClip(root, input));
+  }
+  if (replaced > 0) {
+    // Said out loud: silently deleting clips would be its own bug report.
+    process.stderr.write(`clips: replaced ${replaced} generated clip(s)\n`);
   }
   return created;
 };
