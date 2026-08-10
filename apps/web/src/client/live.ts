@@ -1,4 +1,4 @@
-import { mountReview } from './review.js';
+import { mountMoments } from './moments.js';
 
 /**
  * Bringing the page up to date without reloading it.
@@ -22,9 +22,17 @@ import { mountReview } from './review.js';
  * scrolls.
  */
 
-/** Islands that live inside a swappable region and must be re-mounted after it. */
-const REMOUNT: Record<string, () => void> = {
-  moments: mountReview,
+/**
+ * Islands that live inside a swappable region and must be re-mounted after it.
+ *
+ * `moments` holds `#moment-review`, and it must be that island — not the review
+ * scrubber, which lives on another page entirely and inside no region at all.
+ * Pointing this at the scrubber meant the moment list was re-rendered as inert
+ * server markup, with nothing behind Keep or Reject, at exactly the point a
+ * finished job swapped new suggestions in.
+ */
+export const REMOUNT: Record<string, () => void> = {
+  moments: mountMoments,
 };
 
 let inFlight: Promise<void> | null = null;
