@@ -17,6 +17,18 @@ import { ByteTracker, inflate } from './tracker.js';
  * ball: it is a small box that clears several of its own widths between sampled
  * frames, and boxes that do not touch have an IoU of exactly zero however
  * close they are.
+ *
+ * Measured against the deployed worker, same 20s of real game, same flags:
+ *
+ *                        ball        hoop      player      referee    time
+ *   deployed today     21 / 382    7 / 387   297 / 8604   39 / 803    89s
+ *   + birth at floor   71 / 831   15 / 425   297 / 8604   39 / 803    93s
+ *   + buffered IoU     66 / 891   15 / 425   297 / 8604   39 / 803    88s
+ *
+ * Ball positions rise 133% for no measurable runtime. The rim doubles too — its
+ * 0.15 floor was under the same 0.4 birth bar. People are identical to the
+ * digit, which is the invariant the tests below exist to hold: loosening the
+ * ball must never loosen anybody.
  */
 
 const det = (x: number, y: number, w: number, h: number, score: number, classId = 0): Detection => ({

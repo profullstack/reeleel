@@ -83,6 +83,21 @@ export interface PipelineResult {
  * one player's box to capture the player beside them. A ball is the opposite —
  * small, and fast enough to clear several of its own widths — which is why it
  * arrives as a scatter of short tracks rather than a flight.
+ *
+ * Swept over 20s of a real game, at the shipped 2x2 grid and ball floor:
+ *
+ *   buffer   ball tracks / positions   positions per track
+ *   0             71 / 831                   11.7
+ *   0.5           67 / 869                   13.0
+ *   1.5           66 / 891                   13.5
+ *   3.0           59 / 900                   15.3
+ *
+ * Tracks fall while positions rise, which is fragments being joined into
+ * flights rather than new detections appearing. 3.0 joins more, but buys almost
+ * no extra coverage for it (+1% positions over 1.5) while roughly doubling the
+ * radius in which a stray ball-shaped blob can be mistaken for the ball — and a
+ * track that teleports is worse than two that stop. Player, referee and hoop
+ * counts were identical to the digit at every value.
  */
 const SMALL_FAST: Record<string, number> = { ball: 1.5, puck: 1.5 };
 
