@@ -11,7 +11,7 @@ import { getFocalAthlete } from './athletes.js';
 import { generateMoments } from './moments.js';
 import { generateProxy, generateThumbnails } from './media.js';
 import { readManifest } from './projects.js';
-import { createTrack } from './tracks.js';
+import { clearTracks, createTrack } from './tracks.js';
 import type { Job, Preset } from './types.js';
 import { findMissingSources, listVideos } from './videos.js';
 
@@ -399,6 +399,28 @@ export const analyzeProject = async (
         const analyzedHeight = input === video.path ? sourceHeight : proxyHeight(video.proxyPath);
         const scale = analyzedHeight > 0 && sourceHeight > 0 ? sourceHeight / analyzedHeight : 1;
 
+        /**
+         * Replace, do not append. Detection used to add its tracks on top of
+         * whatever was already there, so re-analysing a video scored it against
+         * every previous run at once — including runs that were later found to
+         * be broken. A project analysed six times carried six overlapping copies
+         * of every player.
+         */
+        const cleared = await clearTracks(root, video.id);
+        if (cleared.removed > 0) {
+          await logJob(
+            root,
+            job.id,
+            `replacing ${cleared.removed} track(s) from earlier runs of this video`,
+          );
+        }
+        if (cleared.unboundAthletes.length > 0) {
+          // Track ids do not survive re-detection, so the binding cannot either.
+          warnings.push(
+            'Re-detection replaced the tracks your athlete was bound to. Open "Identify your athlete" and pick them again.',
+          );
+        }
+
         for (const track of parsed.tracks ?? []) {
           await createTrack(root, {
             videoId: video.id,
@@ -447,10 +469,21 @@ export const analyzeProject = async (
       momentsGenerated === 0 ? 'warn' : 'info',
     );
     if (momentsGenerated === 0) {
+      /**
+       * Judge this on what the scorer had, not on what this run created.
+       * `tracksCreated` is zero for a score-only re-run, so binding an athlete
+       * to 8394 existing tracks reported "no tracks were produced, the detector
+       * found nothing it recognised" — directly contradicted by the very next
+       * line, which counted them.
+       */
+      const scoredTracks = scored.diagnoses.reduce(
+        (sum, entry) => sum + Object.values(entry.diagnosis.tracksByClass).reduce((a, b) => a + b, 0),
+        0,
+      );
       await logJob(
         root,
         job.id,
-        tracksCreated === 0
+        scoredTracks === 0
           ? 'No tracks were produced, so there was nothing to score. The detector found nothing it recognised in this footage.'
           : `Tracks were found but none scored above the ${plugin.moments.minScore} threshold for ${manifest.sport}.`,
         'warn',

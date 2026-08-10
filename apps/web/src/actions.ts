@@ -11,6 +11,8 @@ import { originAllowed, ownerFor, scopeFor } from '@reeleel/api';
 import {
   addAthlete,
   addVideo,
+  assignTracksToAthlete,
+  tracksForAthlete,
   analyzeProject,
   cancelJob,
   clipsFromMoments,
@@ -444,9 +446,14 @@ export const registerActions = (app: Hono): void => {
         ...(videoId === undefined ? {} : { videoId }),
       });
       const athletes = await listAthletes(root);
+      // What the user already picked, so the grid reopens with it selected.
+      const focalAthlete = athletes.find((athlete) => athlete.isFocal) ?? athletes[0];
+      const assignedTrackIds =
+        focalAthlete === undefined ? [] : await tracksForAthlete(root, focalAthlete.id);
       return c.json({
         ok: true,
         candidates,
+        assignedTrackIds,
         athletes: athletes.map((athlete) => ({
           id: athlete.id,
           name: athlete.name,
@@ -502,10 +509,22 @@ export const registerActions = (app: Hono): void => {
     try {
       const root = await rootOf(c);
       const body = c.req.header('content-type')?.includes('application/json') === true
-        ? ((await c.req.json().catch(() => ({}))) as { trackId?: string })
+        ? ((await c.req.json().catch(() => ({}))) as { trackId?: string; trackIds?: string[] })
         : { trackId: field(await c.req.parseBody(), 'trackId') };
 
-      const trackId = typeof body.trackId === 'string' ? body.trackId.trim() : '';
+      /**
+       * Several tracks, because the tracker splits one child into several.
+       * A comma-separated list keeps the no-JS form working unchanged.
+       */
+      const requestedIds = (
+        Array.isArray(body.trackIds)
+          ? body.trackIds
+          : String(body.trackId ?? '').split(',')
+      )
+        .map((id) => (typeof id === 'string' ? id.trim() : ''))
+        .filter((id) => id.length > 0);
+
+      const trackId = requestedIds[0] ?? '';
       if (trackId.length === 0) throw new UploadError('INVALID_INPUT', 'Choose a track first.');
 
       /**
@@ -527,10 +546,12 @@ export const registerActions = (app: Hono): void => {
       // Following and being bound to a track are different things; a picked
       // athlete is obviously the one to follow.
       await updateAthlete(root, athleteId, { focalTrackId: trackId, focal: true });
+      // Every fragment the user picked, not only the first.
+      const assigned = await assignTracksToAthlete(root, athleteId, requestedIds);
 
       startAnalysis(root, { preset: 'balanced', scoreOnly: true });
 
-      if (prefersJson(c)) return c.json({ ok: true, athleteId, trackId });
+      if (prefersJson(c)) return c.json({ ok: true, athleteId, trackId, assigned });
       return back(c, to, 'Athlete identified — re-scoring with them as the focus');
     } catch (error) {
       if (prefersJson(c)) return uploadJson(c, error);
