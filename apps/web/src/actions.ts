@@ -69,6 +69,7 @@ import {
   renameSession,
 } from './chunked.js';
 import { boundaryOf } from './multipart.js';
+import { parseByteRange } from './range.js';
 import { UploadError, receiveVideoUpload } from './receive.js';
 import {
   beginUpload,
@@ -939,20 +940,18 @@ export const registerActions = (app: Hono): void => {
       c.header('accept-ranges', 'bytes');
       c.header('content-type', 'video/mp4');
 
-      const match = range === undefined ? null : /^bytes=(\d*)-(\d*)$/.exec(range.trim());
-      if (match === null) {
+      const parsedRange = parseByteRange(range, size);
+      if (parsedRange.kind === 'none') {
         c.header('content-length', String(size));
         return c.body(Readable.toWeb(createReadStream(file)) as ReadableStream);
       }
 
-      // An open-ended range ("bytes=1000-") is what a seeking player sends.
-      const start = match[1] === '' ? 0 : Number(match[1]);
-      const end = match[2] === '' ? size - 1 : Math.min(Number(match[2]), size - 1);
-      if (!Number.isFinite(start) || start > end || start >= size) {
+      if (parsedRange.kind === 'invalid') {
         c.header('content-range', `bytes */${size}`);
         return c.body(null, 416);
       }
 
+      const { start, end } = parsedRange;
       c.header('content-range', `bytes ${start}-${end}/${size}`);
       c.header('content-length', String(end - start + 1));
       return c.body(
