@@ -44,11 +44,19 @@ export const ReviewPage: FC<{
       ) : (
         <>
           <div class="card">
-            <p class="muted">
-              Scrub to a point where you know your athlete is on screen, then{' '}
-              <strong>click the box around them</strong>. That binds them and re-scores — no
-              re-running detection.
-            </p>
+            {/* Written as the three things to do, in order. "Scrub" is editing
+                jargon and was not understood; "drag the progress bar" is the
+                same instruction and needs no translation. */}
+            <ol class="muted" style="margin:0 0 .75rem 1.1rem;padding:0">
+              <li>Drag the progress bar until you can see your athlete clearly.</li>
+              <li>
+                Press <strong>Identify my athlete</strong> — the video pauses.
+              </li>
+              <li>
+                <strong>Click the box drawn around them.</strong> That binds them and re-scores in
+                seconds, without re-running detection.
+              </li>
+            </ol>
             <div
               id="review-surface"
               data-tracks={`${base}/videos/${video.id}/tracks`}

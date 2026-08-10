@@ -127,7 +127,7 @@ const attach = (node: HTMLElement): void => {
     if (on) {
       video.pause();
       status.textContent =
-        'Click the box around your athlete. The player controls still work underneath.';
+        'Now click the box drawn around your athlete. The play controls still work below.';
     } else {
       draw();
     }
@@ -214,7 +214,7 @@ const attach = (node: HTMLElement): void => {
         ? ' — your athlete is one of them.'
         : identifying
           ? ' — click the box around your athlete.'
-          : ' — press Identify my athlete, then click them.');
+          : ' — drag the progress bar to find them, then press Identify my athlete.');
   };
 
   const tick = (): void => {
