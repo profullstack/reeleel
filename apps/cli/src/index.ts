@@ -15,7 +15,7 @@ import { registerProjectCommands } from './commands/project.js';
 import { registerSystemCommands } from './commands/system.js';
 import { configureOutput, fail } from './output.js';
 
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 
 export const buildProgram = (): Command => {
   const program = new Command();

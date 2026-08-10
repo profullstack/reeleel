@@ -1,6 +1,6 @@
 {
   "name": "@reeleel/desktop",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "private": true,
   "description": "ReelEel desktop shell (Windows, macOS, Linux). Wraps the same @reeleel/core services as the CLI and web app.",

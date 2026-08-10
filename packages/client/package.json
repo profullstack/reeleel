@@ -1,6 +1,6 @@
 {
   "name": "@reeleel/client",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "Typed HTTP client for the ReelEel API. Runtime-agnostic: React Native, browsers, Node.",
   "license": "MIT",

@@ -90,7 +90,7 @@ export const createApp = (options: CreateAppOptions = {}): Hono => {
     }),
   );
 
-  app.get('/api/health', (c) => c.json({ ok: true, service: 'reeleel-api', version: '0.2.0' }));
+  app.get('/api/health', (c) => c.json({ ok: true, service: 'reeleel-api', version: '0.3.0' }));
 
   /**
    * Token login for native clients, which have no cookie jar. Returns the same
