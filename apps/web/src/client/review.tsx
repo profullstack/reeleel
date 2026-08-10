@@ -60,20 +60,79 @@ const sampleAt = (track: Track, ts: number): Sample | null => {
   return best;
 };
 
+/** Height reserved for the native player controls at the bottom of the video. */
+export const CONTROL_STRIP = '3.5rem';
+
+/**
+ * The canvas never takes the pointer. It covers the whole video including the
+ * play button and the scrubber, and the first version of this page could not be
+ * played at all because those controls sat underneath a click target.
+ */
+export const CANVAS_STYLE =
+  'position:absolute;inset:0;width:100%;height:100%;border-radius:.4rem;pointer-events:none';
+
+/**
+ * Clicks land here instead, and only while identifying. It stops short of the
+ * control strip so playback stays reachable even mid-selection.
+ */
+export const HIT_STYLE =
+  `position:absolute;left:0;right:0;top:0;bottom:${CONTROL_STRIP};cursor:crosshair;display:none`;
+
 const attach = (node: HTMLElement): void => {
   const video = node.querySelector('video');
   const tracksUrl = node.dataset['tracks'];
   const bindUrl = node.dataset['bind'];
   if (video === null || tracksUrl === undefined || bindUrl === undefined) return;
 
+  /**
+   * Boxes are drawn on top of the video, so the canvas covers the play button
+   * and the scrubber too. Left clickable it swallows both: the first version
+   * of this page could not be played at all, because the control that starts
+   * playback was underneath a click target for selecting a player.
+   *
+   * So the canvas ignores the pointer by default and only accepts clicks while
+   * identifying, and even then it stops short of the control strip.
+   */
   const canvas = document.createElement('canvas');
-  canvas.style.cssText =
-    'position:absolute;inset:0;width:100%;height:100%;border-radius:.4rem;cursor:crosshair';
+  canvas.style.cssText = CANVAS_STYLE;
   node.appendChild(canvas);
+
+  /**
+   * Clicks land here, not on the canvas: the canvas must stay exactly the size
+   * of the video or every box is drawn in the wrong place, while the hit layer
+   * needs to stop above the controls. Two elements, two jobs.
+   */
+  const hit = document.createElement('div');
+  hit.style.cssText = HIT_STYLE;
+  node.appendChild(hit);
+
+  const controls = document.createElement('div');
+  controls.className = 'row';
+  controls.style.cssText = 'margin-top:.5rem;align-items:center;gap:.6rem';
+  const identify = document.createElement('button');
+  identify.type = 'button';
+  identify.textContent = 'Identify my athlete';
+  controls.appendChild(identify);
+  node.appendChild(controls);
 
   const status = document.createElement('p');
   status.className = 'muted';
   node.appendChild(status);
+
+  let identifying = false;
+  const setIdentifying = (on: boolean): void => {
+    identifying = on;
+    identify.textContent = on ? 'Cancel' : 'Identify my athlete';
+    hit.style.display = on ? 'block' : 'none';
+    if (on) {
+      video.pause();
+      status.textContent =
+        'Now click the box drawn around your athlete. The play controls still work below.';
+    } else {
+      draw();
+    }
+  };
+  identify.addEventListener('click', () => setIdentifying(!identifying));
 
   let data: TrackData | null = null;
   let windowStart = Number.NaN;
@@ -130,9 +189,9 @@ const attach = (node: HTMLElement): void => {
     const boxes = visible();
     for (const { track, sample } of boxes) {
       const color = track.focal ? '#38d95b' : (COLORS[track.className] ?? '#9a9a9a');
-      context.lineWidth = track.focal ? 3 : 1.5;
+      context.lineWidth = track.focal ? 4 : 2;
       context.strokeStyle = color;
-      context.globalAlpha = track.focal || track.className !== 'player' ? 1 : 0.6;
+      context.globalAlpha = track.focal || track.className !== 'player' ? 1 : 0.9;
       context.strokeRect(sample.x * scaleX, sample.y * scaleY, sample.w * scaleX, sample.h * scaleY);
       if (track.focal || track.className !== 'player') {
         context.globalAlpha = 1;
@@ -151,7 +210,11 @@ const attach = (node: HTMLElement): void => {
     const bound = boxes.some((b) => b.track.focal);
     status.textContent =
       `${people} person(s) tracked at ${video.currentTime.toFixed(1)}s` +
-      (bound ? ' — your athlete is one of them.' : ' — click the box around your athlete.');
+      (bound
+        ? ' — your athlete is one of them.'
+        : identifying
+          ? ' — click the box around your athlete.'
+          : ' — drag the progress bar to find them, then press Identify my athlete.');
   };
 
   const tick = (): void => {
@@ -174,6 +237,7 @@ const attach = (node: HTMLElement): void => {
       windowStart = Number.NaN;
       await ensure(video.currentTime);
       draw();
+      setIdentifying(false);
       status.textContent = 'Identified — re-scoring now. Suggested moments will update.';
     } catch (cause) {
       status.textContent = cause instanceof Error ? cause.message : String(cause);
@@ -182,8 +246,10 @@ const attach = (node: HTMLElement): void => {
     }
   };
 
-  canvas.addEventListener('click', (event) => {
+  hit.addEventListener('click', (event) => {
     if (data === null) return;
+    // Measured against the canvas, which is the full video rectangle — the hit
+    // layer is deliberately shorter, so using its box would skew every click.
     const rect = canvas.getBoundingClientRect();
     const x = ((event.clientX - rect.left) / rect.width) * data.frameWidth;
     const y = ((event.clientY - rect.top) / rect.height) * data.frameHeight;
