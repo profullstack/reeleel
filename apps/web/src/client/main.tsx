@@ -105,6 +105,9 @@ const MomentReview = ({ projectId, initial }: { projectId: string; initial: Mome
 };
 
 const mount = (): void => {
+  // Proof the bundle ran, so the stylesheet can hide instructions that only
+  // make sense without it.
+  document.documentElement.classList.add('js');
   // Independent of the review island, and present on pages that have no moments.
   mountUploads();
   mountJobLog();

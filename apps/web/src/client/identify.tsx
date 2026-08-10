@@ -1,6 +1,8 @@
 /** @jsxImportSource hono/jsx/dom */
 import { render, useEffect, useState } from 'hono/jsx/dom';
 
+import { emitChanged } from './live.js';
+
 /**
  * "Which one is yours?"
  *
@@ -92,6 +94,8 @@ const Identify = ({ base }: { base: string }) => {
   const [scores, setScores] = useState<Record<string, Match>>({});
   const [finding, setFinding] = useState(false);
   const [found, setFound] = useState<string | null>(null);
+  /** What just happened, said here rather than via a redirect and a flash. */
+  const [saved, setSaved] = useState<string | null>(null);
 
   const load = async (): Promise<void> => {
     try {
@@ -190,20 +194,33 @@ const Identify = ({ base }: { base: string }) => {
     const target = athleteId === '' ? 'new' : athleteId;
     setBusy(picked[0] ?? 'saving');
     setError(null);
+    setSaved(null);
     try {
       const response = await fetch(`${base}/athletes/${target}/track`, {
         method: 'POST',
         headers: { accept: 'application/json', 'content-type': 'application/json' },
         body: JSON.stringify({ trackId: picked[0], trackIds: picked }),
       });
-      const body = (await response.json()) as { ok: boolean; error?: string };
+      const body = (await response.json()) as { ok: boolean; athleteId?: string; error?: string };
       if (!response.ok || !body.ok) throw new Error(body.error ?? 'Could not save that choice.');
-      // Re-scoring runs in the background; the job log shows it finishing.
-      window.location.assign(
-        `${base}?ok=${encodeURIComponent(`Athlete identified across ${picked.length} track(s) — re-scoring`)}`,
-      );
+
+      /**
+       * Stay on the page.
+       *
+       * This navigated, which meant every save cost a full reload — losing the
+       * grid, the scroll position and any sense of what had just happened. It
+       * also raced the user: a click made before the reload landed arrived with
+       * no athlete loaded, and the server minted another one. Seven duplicates
+       * came from exactly this.
+       */
+      if (body.athleteId !== undefined) setAthleteId(body.athleteId);
+      setSaved(`Identified across ${picked.length} track(s) — re-scoring now`);
+      // Reload this island's own data, then let the rest of the page catch up.
+      await load();
+      emitChanged();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
       setBusy(null);
     }
   };
@@ -252,6 +269,7 @@ const Identify = ({ base }: { base: string }) => {
       )}
 
       {error === null ? null : <p class="pill reject upload-error">{error}</p>}
+      {saved === null ? null : <p class="notice">{saved}</p>}
 
       {candidates.length === 0 ? (
         <p class="muted">
