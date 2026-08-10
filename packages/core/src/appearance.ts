@@ -216,7 +216,16 @@ export const similarity = (a: number[], b: number[]): number => {
 
 export interface ProposalOptions {
   videoId?: string;
-  /** Ignore candidates shorter than this. Default 1.5s. */
+  /**
+   * Ignore candidates shorter than this. Deliberately far lower than the
+   * picker's own floor.
+   *
+   * A human choosing by eye needs a crop long enough to recognise, so the grid
+   * hides anything under 1.5s. Stitching is the opposite case: the short
+   * fragments are the connective tissue, and five of the eight links that
+   * recovered a real athlete were under 1.5s. Continuity and colour justify
+   * them without anyone having to recognise a face in a third of a second.
+   */
   minSeconds?: number;
   /** Minimum agreement to propose at all. Default {@link PROPOSAL_THRESHOLD}. */
   threshold?: number;
@@ -273,7 +282,7 @@ export const proposeAthleteTracks = async (
     );
   }
 
-  const minSeconds = options.minSeconds ?? 1.5;
+  const minSeconds = options.minSeconds ?? 0.25;
   const candidates = series.filter((track) => {
     if (assigned.has(track.id)) return false;
     if (track.className !== 'player') return false;
@@ -294,6 +303,7 @@ export const proposeAthleteTracks = async (
     });
   }
 
+  const frameWidth = video.probe?.video?.width ?? 1920;
   const boxes = [...reference, ...candidates].flatMap((track) =>
     sampleBoxes(track).map((box) => ({ track: track.id, ...box })),
   );
@@ -310,7 +320,17 @@ export const proposeAthleteTracks = async (
     worker.command,
     [...worker.args, 'appearance', '--input', input],
     {
-      stdin: JSON.stringify({ boxes }),
+      /**
+       * The boxes' pixel space goes with the boxes. Tracks are in source-video
+       * coordinates while the file being read is the much smaller proxy, and
+       * letting the worker infer the space from the file it opened measured
+       * every crop against the wrong scale.
+       */
+      stdin: JSON.stringify({
+        boxes,
+        sourceWidth: frameWidth,
+        sourceHeight: video.probe?.video?.height ?? 1080,
+      }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     },
   );
@@ -359,7 +379,6 @@ export const proposeAthleteTracks = async (
    * which a signature frozen at the first binding cannot.
    */
   const threshold = options.threshold ?? COLOUR_FLOOR;
-  const frameWidth = video.probe?.video?.width ?? 1920;
   const limit = options.limit ?? 40;
 
   const chosen = [...reference];

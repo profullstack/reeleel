@@ -215,9 +215,15 @@ const appearance = async (flags: Record<string, string>): Promise<void> => {
     return;
   }
 
-  let request: { boxes?: SignatureBox[] };
+  interface Request {
+    boxes?: SignatureBox[];
+    /** The pixel space the boxes are in — see below. */
+    sourceWidth?: number;
+    sourceHeight?: number;
+  }
+  let request: Request;
   try {
-    request = JSON.parse(await readStdin()) as { boxes?: SignatureBox[] };
+    request = JSON.parse(await readStdin()) as Request;
   } catch (cause) {
     emit({ error: `stdin was not the JSON box list this expects: ${String(cause)}` });
     return;
@@ -229,8 +235,19 @@ const appearance = async (flags: Record<string, string>): Promise<void> => {
   }
 
   const media = await probe(input);
-  const width = media.video?.width ?? 0;
-  const height = media.video?.height ?? 0;
+  /**
+   * The boxes' coordinate space travels with the boxes, and is not the same
+   * thing as the size of the file being decoded.
+   *
+   * Tracks are stored in source-video pixels, but this reads the 540p proxy
+   * because a shirt's colour survives that and decodes in a fraction of the
+   * time. Taking the space from the decoded file measured every torso against
+   * the wrong scale — crops landed off the edge of the frame, signatures came
+   * back empty or meaningless, and the result was a confident zero matches on
+   * footage where eight were there to be found.
+   */
+  const width = request.sourceWidth ?? media.video?.width ?? 0;
+  const height = request.sourceHeight ?? media.video?.height ?? 0;
   if (width <= 0 || height <= 0) {
     emit({ error: `${input} has no readable video stream.` });
     return;
