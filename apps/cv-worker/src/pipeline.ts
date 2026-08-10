@@ -51,6 +51,8 @@ export interface PipelineOptions {
    * detections are the same ball seen more often rather than new phantoms.
    */
   classConfidence?: Record<string, number>;
+  /** Per-class association buffer; omitted means the built-in table. */
+  classBuffer?: Record<string, number>;
   iouThreshold: number;
   sourceWidth: number;
   sourceHeight: number;
@@ -71,6 +73,18 @@ export interface PipelineResult {
   /** Requested classes this model cannot produce, reported rather than faked. */
   unsupportedClasses: string[];
 }
+
+/**
+ * How far each class may move, relative to its own size, and still be
+ * recognised as the same object on the next sampled frame.
+ *
+ * People are left at 0: a player cannot cross their own width in a frame, so
+ * plain overlap already answers the question and buffering would only invite
+ * one player's box to capture the player beside them. A ball is the opposite —
+ * small, and fast enough to clear several of its own widths — which is why it
+ * arrives as a scatter of short tracks rather than a flight.
+ */
+const SMALL_FAST: Record<string, number> = { ball: 1.5, puck: 1.5 };
 
 export const createSession = async (
   modelPath: string,
@@ -203,6 +217,14 @@ export const runPipeline = async (options: PipelineOptions): Promise<PipelineRes
     // this lets through, so the tracker's floor follows the lowest class floor.
     lowThreshold: decodeFloor,
     iouThreshold: options.iouThreshold,
+    /**
+     * A class that was given its own confidence floor gets to start tracks at
+     * that floor too. Without this the floor only ever fed the rescue pass,
+     * which cannot open a track — so a ball that is never seen at 0.4 stays
+     * invisible no matter how far the floor drops.
+     */
+    classHighThreshold: options.classConfidence ?? {},
+    classBuffer: options.classBuffer ?? SMALL_FAST,
   });
 
   let framesProcessed = 0;

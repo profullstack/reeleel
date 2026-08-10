@@ -113,7 +113,50 @@ const attach = (node: HTMLElement): void => {
   identify.type = 'button';
   identify.textContent = 'Identify my athlete';
   controls.appendChild(identify);
+
+  /**
+   * Who this is, asked where the user is already looking at them.
+   *
+   * A number alone does not name a child — both teams field a 14 and they are
+   * on court together — so the shirt colour is the part a parent actually uses.
+   * Asking here rather than on a separate panel is the difference between the
+   * fields being filled in and being skipped: production has a child recorded
+   * as team "Triton (white)" because the only form that offered a colour was
+   * one the user never reached, so they crammed it into the team box.
+   */
+  const field = (placeholder: string, width: string): HTMLInputElement => {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = placeholder;
+    input.style.cssText = `width:${width};flex:none`;
+    controls.appendChild(input);
+    return input;
+  };
+  const nameInput = field('Name', '8rem');
+  const numberInput = field('#', '3.5rem');
+  const colorInput = field('Shirt colour', '7rem');
+  const teamInput = field('Team', '7rem');
+
+  /** Only send what was actually typed; blank fields must not erase a name. */
+  const identity = (): Record<string, string> => {
+    const parts: Record<string, string> = {};
+    if (nameInput.value.trim() !== '') parts['name'] = nameInput.value.trim();
+    if (numberInput.value.trim() !== '') parts['jerseyNumber'] = numberInput.value.trim();
+    if (colorInput.value.trim() !== '') parts['jerseyColor'] = colorInput.value.trim();
+    if (teamInput.value.trim() !== '') parts['team'] = teamInput.value.trim();
+    return parts;
+  };
+
+  /** Shown only while a bind is in flight, because that one really does wait. */
+  const spinner = document.createElement('progress');
+  spinner.style.cssText = 'display:none;width:8rem;flex:none';
+  controls.appendChild(spinner);
   node.appendChild(controls);
+
+  const setPending = (on: boolean): void => {
+    spinner.style.display = on ? 'block' : 'none';
+    identify.disabled = on;
+  };
 
   const status = document.createElement('p');
   status.className = 'muted';
@@ -224,24 +267,43 @@ const attach = (node: HTMLElement): void => {
   const bind = async (trackId: string): Promise<void> => {
     if (busy) return;
     busy = true;
-    status.textContent = 'Binding…';
+    /**
+     * Expanding decodes frames, so this is the one click on the page with a
+     * real wait behind it. Say what is happening rather than leaving a dead
+     * button: not knowing whether to wait or click again is what produced eight
+     * athletes in three minutes.
+     */
+    setPending(true);
+    status.textContent = 'Following them through the rest of the game…';
     try {
       const response = await fetch(bindUrl, {
         method: 'POST',
         headers: { accept: 'application/json', 'content-type': 'application/json' },
-        body: JSON.stringify({ trackId, trackIds: [trackId] }),
+        body: JSON.stringify({
+          trackId,
+          trackIds: [trackId],
+          // One click should mark the child everywhere they appear from here,
+          // not only in the fragment under the cursor.
+          expand: true,
+          ...identity(),
+        }),
       });
-      const body = (await response.json()) as { ok: boolean; error?: string };
+      const body = (await response.json()) as { ok: boolean; error?: string; added?: number };
       if (!response.ok || !body.ok) throw new Error(body.error ?? 'Could not bind that track.');
       // Re-fetch so the box turns green without a reload.
       windowStart = Number.NaN;
       await ensure(video.currentTime);
       draw();
       setIdentifying(false);
-      status.textContent = 'Identified — re-scoring now. Suggested moments will update.';
+      const added = body.added ?? 0;
+      status.textContent =
+        (added > 0
+          ? `Identified, and followed them into ${added} more fragment(s) of the game. `
+          : 'Identified. ') + 'Re-scoring now — suggested moments will update on their own.';
     } catch (cause) {
       status.textContent = cause instanceof Error ? cause.message : String(cause);
     } finally {
+      setPending(false);
       busy = false;
     }
   };
@@ -279,5 +341,15 @@ const attach = (node: HTMLElement): void => {
 
 export const mountReview = (): void => {
   const node = document.getElementById('review-surface');
-  if (node !== null) attach(node);
+  if (node === null) return;
+  /**
+   * Attach once. This is called again after a live region is swapped, and
+   * attaching twice appends a second canvas, a second set of fields and a
+   * second Identify button over the same video — the duplicate-surface bug in
+   * miniature, and the kind that only shows up after the page has been open
+   * long enough for something to refresh.
+   */
+  if (node.dataset['mounted'] === 'true') return;
+  node.dataset['mounted'] = 'true';
+  attach(node);
 };

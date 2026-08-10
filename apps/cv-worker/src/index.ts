@@ -43,24 +43,40 @@ const number = (value: string | undefined, fallback: number): number => {
 };
 
 /**
- * `ball=0.08,hoop=0.15` — per-class detection floors.
+ * `ball=0.08,hoop=0.15` — a per-class number, whatever the number means.
  *
  * Malformed pairs are dropped rather than throwing: a typo in a preset should
  * cost the ball some recall, not take a twenty-minute detection pass down with
  * it.
  */
-export const parseClassConfidence = (value: string | undefined): Record<string, number> => {
+const parseClassNumbers = (value: string | undefined, max: number): Record<string, number> => {
   if (value === undefined || value.trim().length === 0) return {};
   const out: Record<string, number> = {};
   for (const pair of value.split(',')) {
     const [name, raw] = pair.split('=');
     const parsed = Number(raw);
     if (name === undefined || name.trim().length === 0) continue;
-    if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 1) continue;
+    if (!Number.isFinite(parsed) || parsed <= 0 || parsed > max) continue;
     out[name.trim()] = parsed;
   }
   return out;
 };
+
+/** Per-class detection floors. A confidence cannot exceed 1. */
+export const parseClassConfidence = (value: string | undefined): Record<string, number> =>
+  parseClassNumbers(value, 1);
+
+/**
+ * Per-class association buffers, as a fraction of the box's own size.
+ *
+ * Exposed as a flag for the same reason the floors are: the value that belongs
+ * here is a measurement, not an opinion, and a constant compiled into the
+ * pipeline cannot be swept against real footage without rebuilding it. Allowed
+ * well above 1 — a basketball travels several of its own widths between sampled
+ * frames, which is the entire problem being solved.
+ */
+export const parseClassBuffer = (value: string | undefined): Record<string, number> =>
+  parseClassNumbers(value, 8);
 
 /**
  * How many threads onnxruntime should use for one inference.
@@ -187,6 +203,9 @@ const detectAndTrack = async (flags: Record<string, string>): Promise<void> => {
       tileGrid: number(flags['tile-grid'], 1),
       minConfidence: number(flags['min-confidence'], 0.3),
       classConfidence: parseClassConfidence(flags['class-confidence']),
+      ...(flags['class-buffer'] === undefined
+        ? {}
+        : { classBuffer: parseClassBuffer(flags['class-buffer']) }),
       iouThreshold: number(flags['iou'], 0.45),
       sourceWidth: width,
       sourceHeight: height,

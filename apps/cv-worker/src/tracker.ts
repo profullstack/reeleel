@@ -44,6 +44,33 @@ export interface TrackerOptions {
   maxAge: number;
   /** Tracks shorter than this are dropped as noise. */
   minLength: number;
+  /**
+   * Per-class overrides of {@link highThreshold}, keyed by class name.
+   *
+   * Only a *high* detection may start a track — a low one can extend a track
+   * that already exists, but never open one. With a single global bar that made
+   * the per-class confidence floors half a fix: letting a 0.2 ball through the
+   * filter puts it in the low pile, where it can only ever attach to a ball
+   * track that was already running. Since the ball is rarely seen at 0.4 at
+   * all, there was usually nothing for it to attach to. That is the measured
+   * shape of the problem — loosening the floor raised ball *positions* by 69%
+   * while barely moving the track count, because the extra detections extended
+   * the few tracks that existed rather than starting the many that did not.
+   */
+  classHighThreshold: Record<string, number>;
+  /**
+   * Per-class association buffer, keyed by class name: both boxes are grown by
+   * this fraction of their own size before overlap is measured.
+   *
+   * Overlap is the wrong question for a thrown ball. A basketball is a small
+   * box that routinely travels more than its own width between sampled frames,
+   * and two boxes that do not touch have an IoU of exactly zero however close
+   * they are — so association fails, the track dies, and a new one is born
+   * further along the same flight. Growing both boxes first (buffered IoU)
+   * restores a gradient for objects that move far relative to their size, and
+   * leaves anything with a buffer of 0 — every person on court — untouched.
+   */
+  classBuffer: Record<string, number>;
 }
 
 export const DEFAULT_TRACKER_OPTIONS: TrackerOptions = {
@@ -52,6 +79,8 @@ export const DEFAULT_TRACKER_OPTIONS: TrackerOptions = {
   iouThreshold: 0.2,
   maxAge: 30,
   minLength: 3,
+  classHighThreshold: {},
+  classBuffer: {},
 };
 
 const centre = (box: Box): { x: number; y: number } => ({
@@ -73,6 +102,30 @@ interface Pair {
   score: number;
 }
 
+const box = (detection: Detection): Box => ({
+  x: detection.x,
+  y: detection.y,
+  w: detection.w,
+  h: detection.h,
+});
+
+/**
+ * Grows a box by a fraction of its own size on every side.
+ *
+ * A buffer of 0 returns the box unchanged, which is the point: buffering is
+ * opt-in per class, so classes that do not ask for it associate on exactly the
+ * geometry they always did.
+ */
+export const inflate = (target: Box, by: number): Box =>
+  by <= 0
+    ? target
+    : {
+        x: target.x - target.w * by,
+        y: target.y - target.h * by,
+        w: target.w * (1 + 2 * by),
+        h: target.h * (1 + 2 * by),
+      };
+
 /**
  * Greedy IoU association. Hungarian would be optimal, but greedy-by-IoU is
  * within noise for this many objects and is far easier to reason about when a
@@ -82,14 +135,16 @@ const associate = (
   tracks: Track[],
   detections: Detection[],
   iouThreshold: number,
+  bufferFor: (track: Track) => number = () => 0,
 ): { matches: Pair[]; unmatchedTracks: number[]; unmatchedDetections: number[] } => {
   const candidates: Pair[] = [];
 
   tracks.forEach((track, trackIndex) => {
-    const predicted = predict(track);
+    const buffer = bufferFor(track);
+    const predicted = inflate(predict(track), buffer);
     detections.forEach((detection, detectionIndex) => {
       if (detection.classId !== track.classId) return;
-      const score = iou(predicted, detection);
+      const score = iou(predicted, inflate(box(detection), buffer));
       if (score >= iouThreshold) candidates.push({ trackIndex, detectionIndex, score });
     });
   });
@@ -152,12 +207,24 @@ export class ByteTracker {
 
   /** Feeds one frame of detections. */
   update(detections: Detection[], classNames: Record<number, string>, frame: number, ts: number): void {
+    /**
+     * The bar this detection has to clear to be treated as confident — and so
+     * to be allowed to start a track, not merely extend one.
+     */
+    const barFor = (detection: Detection): number => {
+      const className = classNames[detection.classId];
+      const override =
+        className === undefined ? undefined : this.options.classHighThreshold[className];
+      return override ?? this.options.highThreshold;
+    };
+    const bufferFor = (track: Track): number => this.options.classBuffer[track.className] ?? 0;
+
     const usable = detections.filter((d) => d.score >= this.options.lowThreshold);
-    const high = usable.filter((d) => d.score >= this.options.highThreshold);
-    const low = usable.filter((d) => d.score < this.options.highThreshold);
+    const high = usable.filter((d) => d.score >= barFor(d));
+    const low = usable.filter((d) => d.score < barFor(d));
 
     // Pass 1: confident detections against every live track.
-    const first = associate(this.active, high, this.options.iouThreshold);
+    const first = associate(this.active, high, this.options.iouThreshold, bufferFor);
     for (const match of first.matches) {
       const track = this.active[match.trackIndex];
       const detection = high[match.detectionIndex];
@@ -167,7 +234,7 @@ export class ByteTracker {
     // Pass 2: the BYTE step — try the leftovers against tracks that missed out,
     // with a looser bar, so an occluded player is rescued rather than lost.
     const stranded = first.unmatchedTracks.map((i) => this.active[i]).filter((t): t is Track => t !== undefined);
-    const second = associate(stranded, low, this.options.iouThreshold * 0.75);
+    const second = associate(stranded, low, this.options.iouThreshold * 0.75, bufferFor);
     const rescued = new Set<Track>();
     for (const match of second.matches) {
       const track = stranded[match.trackIndex];
@@ -208,9 +275,3 @@ export class ByteTracker {
   }
 }
 
-const box = (detection: Detection): Box => ({
-  x: detection.x,
-  y: detection.y,
-  w: detection.w,
-  h: detection.h,
-});

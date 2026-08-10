@@ -445,7 +445,18 @@ export const ProjectPage: FC<ProjectView> = ({
         game, and click your athlete to identify them.
       </p>
       {moments.length === 0 ? (
-        <p class="empty">Nothing suggested yet — run analysis.</p>
+        /* "Run analysis" while analysis is running is the page telling you to
+           act when the only right move is to wait — and acting again is what
+           produced eight athletes in three minutes. The empty state has to know
+           which of the two situations it is in. */
+        jobs.some((job) => job.status === 'running' || job.status === 'queued') ? (
+          <p class="empty">
+            <progress style="max-width:12rem;vertical-align:middle" /> Working on it — suggested
+            moments will appear here on their own.
+          </p>
+        ) : (
+          <p class="empty">Nothing suggested yet — run analysis.</p>
+        )
       ) : (
         <>
           <p class="muted">
