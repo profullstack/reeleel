@@ -348,19 +348,33 @@ export const rebindAthletes = async (
 
   const restored: { athleteId: string; trackIds: string[] }[] = [];
   for (const binding of bindings) {
+    /**
+     * Every new track that occupies the athlete's old space and time, not the
+     * single best one per old fragment.
+     *
+     * Taking one winner per old fragment made a re-bind incapable of ever
+     * *growing* coverage: N fragments in, at most N fragments out, however the
+     * new run happened to cut the same child up. A binding to one ten-frame
+     * fragment therefore survived re-detection as one ten-frame fragment,
+     * twice, while the run underneath it produced 1,415 tracks. Two tracks
+     * cannot be the same person at the same instant standing in the same box,
+     * so anything clearing the threshold is them.
+     */
     const matched = new Set<string>();
     for (const old of binding.series) {
-      let best: { id: string; score: number } | null = null;
       for (const candidate of fresh) {
         if (candidate.className !== old.className) continue;
-        const score = trackSimilarity(old, candidate);
-        if (score > (best?.score ?? 0)) best = { id: candidate.id, score };
+        if (trackSimilarity(old, candidate) >= REBIND_THRESHOLD) matched.add(candidate.id);
       }
-      if (best !== null && best.score >= REBIND_THRESHOLD) matched.add(best.id);
     }
     if (matched.size === 0) continue;
 
-    const trackIds = [...matched];
+    // Longest first, so the single `focal_track_id` fallback is the most useful
+    // fragment rather than whichever one hashed first.
+    const byId = new Map(fresh.map((track) => [track.id, track]));
+    const trackIds = [...matched].sort(
+      (a, b) => (byId.get(b)?.samples.length ?? 0) - (byId.get(a)?.samples.length ?? 0),
+    );
     const primary = trackIds[0];
     if (primary === undefined) continue;
     await assignTracksToAthlete(root, binding.athleteId, trackIds);

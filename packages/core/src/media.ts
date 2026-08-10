@@ -77,8 +77,16 @@ export const generateThumbnails = async (
   return { dir, files: readdirSync(dir).sort() };
 };
 
+/**
+ * Proxy height in pixels. 540 keeps scrubbing smooth on a laptop.
+ *
+ * Exported because analysis has to be able to ask whether the proxy is big
+ * enough to detect from, rather than assuming it always is.
+ */
+export const PROXY_HEIGHT = 540;
+
 export interface ProxyOptions {
-  /** Proxy height in pixels. 540 keeps scrubbing smooth on a laptop. */
+  /** Proxy height in pixels. Defaults to {@link PROXY_HEIGHT}. */
   height?: number;
   crf?: number;
   signal?: AbortSignal;
@@ -100,7 +108,7 @@ export const generateProxy = async (
   }
 
   const ffmpeg = requireBinary('ffmpeg');
-  const height = options.height ?? 540;
+  const height = options.height ?? PROXY_HEIGHT;
   const dir = projectDir(root, 'proxies');
   mkdirSync(dir, { recursive: true });
   const output = path.join(dir, `${video.id}_${height}p.mp4`);
