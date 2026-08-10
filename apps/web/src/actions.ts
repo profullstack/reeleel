@@ -586,6 +586,10 @@ export const registerActions = (app: Hono): void => {
           id: athlete.id,
           name: athlete.name,
           jerseyNumber: athlete.jerseyNumber,
+          // The shirt is what distinguishes #14 in white from #14 in black,
+          // so the picker needs both, not just a name.
+          team: athlete.team,
+          jerseyColor: athlete.jerseyColor,
           isFocal: athlete.isFocal,
           focalTrackId: athlete.focalTrackId,
         })),
@@ -686,8 +690,40 @@ export const registerActions = (app: Hono): void => {
     try {
       const root = await rootOf(c);
       const body = c.req.header('content-type')?.includes('application/json') === true
-        ? ((await c.req.json().catch(() => ({}))) as { trackId?: string; trackIds?: string[] })
+        ? ((await c.req.json().catch(() => ({}))) as {
+            trackId?: string;
+            trackIds?: string[];
+            name?: string;
+            jerseyNumber?: string;
+            team?: string;
+            jerseyColor?: string;
+          })
         : { trackId: field(await c.req.parseBody(), 'trackId') };
+
+      /**
+       * Who this is, if the picker asked.
+       *
+       * A number on its own does not identify a child: both teams have a 14 and
+       * they are regularly on court together. The shirt colour is the part a
+       * parent actually uses — "#14 in white" — and `jersey_color` has been on
+       * the athlete row since the first migration without anything ever writing
+       * it. Optional, because pointing at the right player remains the only
+       * thing scoring genuinely needs.
+       */
+      const identity = {
+        ...(typeof body.name === 'string' && body.name.trim().length > 0
+          ? { name: body.name.trim() }
+          : {}),
+        ...(typeof body.jerseyNumber === 'string' && body.jerseyNumber.trim().length > 0
+          ? { jerseyNumber: body.jerseyNumber.trim() }
+          : {}),
+        ...(typeof body.team === 'string' && body.team.trim().length > 0
+          ? { team: body.team.trim() }
+          : {}),
+        ...(typeof body.jerseyColor === 'string' && body.jerseyColor.trim().length > 0
+          ? { jerseyColor: body.jerseyColor.trim() }
+          : {}),
+      };
 
       /**
        * Several tracks, because the tracker splits one child into several.
@@ -717,12 +753,13 @@ export const registerActions = (app: Hono): void => {
       const requested = c.req.param('id') ?? '';
       const athlete =
         requested === 'new'
-          ? await addAthlete(root, { name: 'My athlete' })
+          ? await addAthlete(root, { name: 'My athlete', ...identity })
           : await getAthlete(root, requested);
       const athleteId = athlete.id;
       // Following and being bound to a track are different things; a picked
-      // athlete is obviously the one to follow.
-      await updateAthlete(root, athleteId, { focalTrackId: trackId, focal: true });
+      // athlete is obviously the one to follow. Any identity the picker
+      // collected rides along, so "#14 in white" replaces "My athlete".
+      await updateAthlete(root, athleteId, { focalTrackId: trackId, focal: true, ...identity });
       // Every fragment the user picked, not only the first.
       const assigned = await assignTracksToAthlete(root, athleteId, requestedIds);
 

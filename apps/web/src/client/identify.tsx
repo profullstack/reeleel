@@ -39,9 +39,26 @@ interface Athlete {
   id: string;
   name: string | null;
   jerseyNumber: string | null;
+  team: string | null;
+  jerseyColor: string | null;
   isFocal: boolean;
   focalTrackId: string | null;
 }
+
+/**
+ * "#14 in white" — how a parent actually points at their own child.
+ *
+ * A number alone is ambiguous: both teams have a 14 and they are frequently on
+ * court at the same time. The colour is the part you can see in the footage.
+ */
+const describe = (athlete: Athlete): string => {
+  const parts: string[] = [];
+  if (athlete.name !== null && athlete.name.length > 0) parts.push(athlete.name);
+  if (athlete.jerseyNumber !== null) parts.push(`#${athlete.jerseyNumber}`);
+  if (athlete.jerseyColor !== null) parts.push(`in ${athlete.jerseyColor}`);
+  if (athlete.team !== null) parts.push(`(${athlete.team})`);
+  return parts.length > 0 ? parts.join(' ') : '(unnamed)';
+};
 
 const clock = (seconds: number): string => {
   const total = Math.max(0, Math.round(seconds));
@@ -92,6 +109,11 @@ const Identify = ({ base }: { base: string }) => {
   const [scores, setScores] = useState<Record<string, Match>>({});
   const [finding, setFinding] = useState(false);
   const [found, setFound] = useState<string | null>(null);
+  /** Who this is, collected alongside the picking rather than in a second form. */
+  const [name, setName] = useState('');
+  const [jerseyNumber, setJerseyNumber] = useState('');
+  const [jerseyColor, setJerseyColor] = useState('');
+  const [team, setTeam] = useState('');
 
   const load = async (): Promise<void> => {
     try {
@@ -109,7 +131,14 @@ const Identify = ({ base }: { base: string }) => {
       setCandidates(body.candidates ?? []);
       setAthletes(body.athletes ?? []);
       const focal = (body.athletes ?? []).find((a) => a.isFocal) ?? (body.athletes ?? [])[0];
-      if (focal !== undefined) setAthleteId(focal.id);
+      if (focal !== undefined) {
+        setAthleteId(focal.id);
+        // Seed the identity fields so they read as an edit, not a blank form.
+        setName(focal.name ?? '');
+        setJerseyNumber(focal.jerseyNumber ?? '');
+        setJerseyColor(focal.jerseyColor ?? '');
+        setTeam(focal.team ?? '');
+      }
       // Reopen with the existing choice selected, so adding a fragment is an
       // edit rather than starting over.
       const already = body.assignedTrackIds ?? [];
@@ -194,7 +223,7 @@ const Identify = ({ base }: { base: string }) => {
       const response = await fetch(`${base}/athletes/${target}/track`, {
         method: 'POST',
         headers: { accept: 'application/json', 'content-type': 'application/json' },
-        body: JSON.stringify({ trackId: picked[0], trackIds: picked }),
+        body: JSON.stringify({ trackId: picked[0], trackIds: picked, name, jerseyNumber, jerseyColor, team }),
       });
       const body = (await response.json()) as { ok: boolean; error?: string };
       if (!response.ok || !body.ok) throw new Error(body.error ?? 'Could not save that choice.');
@@ -243,13 +272,51 @@ const Identify = ({ base }: { base: string }) => {
           >
             {athletes.map((athlete) => (
               <option key={athlete.id} value={athlete.id} selected={athlete.id === athleteId}>
-                {athlete.name ?? '(unnamed)'}
-                {athlete.jerseyNumber === null ? '' : ` #${athlete.jerseyNumber}`}
+                {describe(athlete)}
               </option>
             ))}
           </select>
         </div>
       )}
+
+      {/* Collected here rather than in a separate "Add an athlete" form, because
+          this is the moment the user is looking at the child and knows the
+          answer. All optional: pointing at the right player is the only thing
+          scoring actually needs. */}
+      <div class="row identity-fields" style="margin-bottom:.75rem;gap:.5rem;flex-wrap:wrap">
+        <input
+          type="text"
+          placeholder="Name (optional)"
+          value={name}
+          onInput={(event: Event) => setName((event.target as HTMLInputElement).value)}
+          style="font:inherit;padding:.35rem;border-radius:.4rem;max-width:11rem"
+        />
+        <input
+          type="text"
+          placeholder="#14"
+          value={jerseyNumber}
+          onInput={(event: Event) => setJerseyNumber((event.target as HTMLInputElement).value)}
+          style="font:inherit;padding:.35rem;border-radius:.4rem;max-width:5rem"
+        />
+        <input
+          type="text"
+          placeholder="Shirt colour, e.g. white"
+          value={jerseyColor}
+          onInput={(event: Event) => setJerseyColor((event.target as HTMLInputElement).value)}
+          style="font:inherit;padding:.35rem;border-radius:.4rem;max-width:12rem"
+        />
+        <input
+          type="text"
+          placeholder="Team (optional)"
+          value={team}
+          onInput={(event: Event) => setTeam((event.target as HTMLInputElement).value)}
+          style="font:inherit;padding:.35rem;border-radius:.4rem;max-width:11rem"
+        />
+      </div>
+      <p class="muted" style="margin-top:-.35rem">
+        Both teams have a #14. The shirt colour is what tells them apart — and what
+        the matcher uses when it looks for the same child elsewhere in the game.
+      </p>
 
       {error === null ? null : <p class="pill reject upload-error">{error}</p>}
 
