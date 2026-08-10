@@ -56,6 +56,8 @@ export const tileTensor = (
   frameWidth: number,
   origin: { x: number; y: number },
   size: number,
+  /** 1 for models that want raw 0-255, 1/255 for models that want 0-1. */
+  scale = 1,
 ): Float32Array => {
   const out = new Float32Array(3 * size * size);
   const plane = size * size;
@@ -65,9 +67,9 @@ export const tileTensor = (
     for (let x = 0; x < size; x += 1) {
       const source = (sourceRow + origin.x + x) * 3;
       const target = targetRow + x;
-      out[target] = pixels[source] ?? 0;
-      out[plane + target] = pixels[source + 1] ?? 0;
-      out[2 * plane + target] = pixels[source + 2] ?? 0;
+      out[target] = (pixels[source] ?? 0) * scale;
+      out[plane + target] = (pixels[source + 1] ?? 0) * scale;
+      out[2 * plane + target] = (pixels[source + 2] ?? 0) * scale;
     }
   }
   return out;
@@ -83,6 +85,7 @@ export const downscaleTensor = (
   frameWidth: number,
   frameHeight: number,
   size: number,
+  scale = 1,
 ): Float32Array => {
   const out = new Float32Array(3 * size * size);
   const plane = size * size;
@@ -111,9 +114,9 @@ export const downscaleTensor = (
       }
       if (n === 0) continue;
       const target = y * size + x;
-      out[target] = r / n;
-      out[plane + target] = g / n;
-      out[2 * plane + target] = b / n;
+      out[target] = (r / n) * scale;
+      out[plane + target] = (g / n) * scale;
+      out[2 * plane + target] = (b / n) * scale;
     }
   }
   return out;

@@ -1,9 +1,12 @@
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+
 import * as ort from 'onnxruntime-node';
 
 import { requireBinary } from '@reeleel/core';
 
-import { mappingFor } from './classes.js';
-import { frameStream, toTensor, viewFor } from './frames.js';
+import { classSidecarPath, mappingFor, parseModelSidecar } from './classes.js';
+import { frameStream, viewFor } from './frames.js';
 import { clampBox, nonMaxSuppression, unletterbox } from './geometry.js';
 import type { Detection } from './geometry.js';
 import {
@@ -16,6 +19,7 @@ import {
 import { ByteTracker } from './tracker.js';
 import type { Track } from './tracker.js';
 import { decodeYolox } from './yolox.js';
+import { decodeYolov8, headKindFor } from './yolov8.js';
 
 export interface PipelineOptions {
   input: string;
@@ -101,7 +105,29 @@ export const staticInputSize = (session: ort.InferenceSession): number | null =>
 
 export const runPipeline = async (options: PipelineOptions): Promise<PipelineResult> => {
   const ffmpeg = requireBinary('ffmpeg');
-  const mapping = mappingFor(options.sport, options.classes);
+  /**
+   * A non-COCO model declares its own classes beside itself. Without this its
+   * indices are read against COCO's table and every box is mislabelled — a
+   * basketball model's hoop would arrive as a bicycle.
+   */
+  const sidecar = classSidecarPath(options.modelPath);
+  const declared = existsSync(sidecar)
+    ? parseModelSidecar(readFileSync(sidecar, 'utf8'))
+    : { classes: null, pixels: 'raw' as const };
+  const custom = declared.classes;
+  /**
+   * YOLOX wants raw 0-255, YOLOv8 wants 0-1. Getting it wrong is silent: every
+   * class saturates to 1.00 and the model finds a ball in an empty gym.
+   */
+  const pixelScale = declared.pixels === 'unit' ? 1 / 255 : 1;
+  if (custom !== null) {
+    process.stderr.write(
+      `note: using this model's own classes (${[...new Set(Object.values(custom))].join(', ')}) ` +
+        `from ${path.basename(sidecar)}.\n`,
+    );
+  }
+
+  const mapping = mappingFor(options.sport, options.classes, custom);
   const session = await createSession(options.modelPath, options.threads);
 
   const inputName = session.inputNames[0];
@@ -183,12 +209,17 @@ export const runPipeline = async (options: PipelineOptions): Promise<PipelineRes
       if (head === undefined) return [];
 
       const raw = head.data as Float32Array;
-      const attributes = head.dims[head.dims.length - 1] ?? 0;
-      return decodeYolox(raw, attributes, {
-        inputWidth: size,
-        inputHeight: size,
-        scoreThreshold: options.minConfidence,
-      }).map((d) => ({
+      // Chosen by shape, never assumed: the wrong decoder does not fail, it
+      // returns a full set of plausible boxes in the wrong places.
+      const decodedHead =
+        headKindFor(head.dims) === 'yolov8'
+          ? decodeYolov8(raw, head.dims, options.minConfidence)
+          : decodeYolox(raw, head.dims[head.dims.length - 1] ?? 0, {
+              inputWidth: size,
+              inputHeight: size,
+              scoreThreshold: options.minConfidence,
+            });
+      return decodedHead.map((d) => ({
         ...d,
         x: d.x * scale + offsetX,
         y: d.y * scale + offsetY,
@@ -199,11 +230,11 @@ export const runPipeline = async (options: PipelineOptions): Promise<PipelineRes
 
     const found: Detection[] =
       grid <= 1
-        ? await runPass(toTensor(frame.pixels, size, size), 0, 0, 1)
+        ? await runPass(downscaleTensor(frame.pixels, size, size, size, pixelScale), 0, 0, 1)
         : // The whole frame, because a close-up player is larger than a tile
           // and is only ever whole in the full view...
           (await runPass(
-            downscaleTensor(frame.pixels, decoded, decoded, size),
+            downscaleTensor(frame.pixels, decoded, decoded, size, pixelScale),
             0,
             0,
             decoded / size,
@@ -214,7 +245,7 @@ export const runPipeline = async (options: PipelineOptions): Promise<PipelineRes
               await Promise.all(
                 origins.map((origin) =>
                   runPass(
-                    tileTensor(frame.pixels, decoded, origin, size),
+                    tileTensor(frame.pixels, decoded, origin, size, pixelScale),
                     origin.x,
                     origin.y,
                     1,

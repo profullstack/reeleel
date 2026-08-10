@@ -122,8 +122,122 @@ export interface ClassMapping {
   missing: string[];
 }
 
-export const mappingFor = (sport: string, requested: string[]): ClassMapping => {
-  const table = COCO_TO_SPORT[sport] ?? {};
+/** Where a model's class list lives, if it has one: `<model>.classes.json`. */
+export const classSidecarPath = (modelPath: string): string =>
+  `${modelPath.replace(/\.onnx$/i, '')}.classes.json`;
+
+/**
+ * How a model wants its pixels.
+ *
+ * YOLOX takes raw 0-255; YOLOv8 expects 0-1. Getting this wrong does not throw
+ * — every class saturates to 1.00 confidence and the model reports a ball, a
+ * hoop and a referee in a photograph of an empty gym. Measured: feeding a
+ * YOLOv8 export raw bytes produced 700 "basketball" detections at 1.00 in a
+ * frame containing no ball at all.
+ */
+export type PixelScale = 'raw' | 'unit';
+
+export interface ModelSidecar {
+  classes: Record<number, string> | null;
+  pixels: PixelScale;
+}
+
+/** Reads both the class list and the pixel convention from one sidecar. */
+export const parseModelSidecar = (raw: string): ModelSidecar => {
+  const classes = parseClassSidecar(raw);
+  let pixels: PixelScale = 'raw';
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed === 'object' && parsed !== null && 'pixels' in parsed) {
+      const value = (parsed as { pixels: unknown }).pixels;
+      if (value === 'unit' || value === 'raw') pixels = value;
+    }
+  } catch {
+    // A malformed sidecar is already reported by parseClassSidecar returning null.
+  }
+  return { classes, pixels };
+};
+
+/**
+ * A model's own class list, read from a `<model>.classes.json` sidecar.
+ *
+ * Either shape is accepted, because both are what the tools in this space
+ * actually emit: an ordered list of names as YOLO's `data.yaml` carries, or an
+ * explicit index-to-name object.
+ *
+ *   ["ball", "hoop", "player"]
+ *   { "0": "ball", "1": "hoop", "2": "player" }
+ *
+ * Names are the ReelEel vocabulary — `player`, `ball`, `hoop`, `referee` — so a
+ * model whose own label is `basketball` or `rim` is renamed here rather than
+ * teaching the rest of the system every model's dialect. Anything unrecognised
+ * is carried through and simply never asked for.
+ */
+export const parseClassSidecar = (raw: string): Record<number, string> | null => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+
+  const named = (value: unknown): string | null =>
+    typeof value === 'string' && value.trim().length > 0 ? SYNONYMS[value.trim().toLowerCase()] ?? value.trim().toLowerCase() : null;
+
+  if (Array.isArray(parsed)) {
+    const table: Record<number, string> = {};
+    parsed.forEach((value, index) => {
+      const name = named(value);
+      if (name !== null) table[index] = name;
+    });
+    return Object.keys(table).length > 0 ? table : null;
+  }
+
+  if (typeof parsed === 'object' && parsed !== null) {
+    const source = 'classes' in parsed ? (parsed as { classes: unknown }).classes : parsed;
+    if (Array.isArray(source)) return parseClassSidecar(JSON.stringify(source));
+    if (typeof source !== 'object' || source === null) return null;
+
+    const table: Record<number, string> = {};
+    for (const [key, value] of Object.entries(source)) {
+      const index = Number(key);
+      const name = named(value);
+      if (Number.isInteger(index) && index >= 0 && name !== null) table[index] = name;
+    }
+    return Object.keys(table).length > 0 ? table : null;
+  }
+
+  return null;
+};
+
+/** What other people's basketball models call the things we already name. */
+const SYNONYMS: Record<string, string> = {
+  basketball: 'ball',
+  ball: 'ball',
+  'sports ball': 'ball',
+  rim: 'hoop',
+  hoop: 'hoop',
+  basket: 'hoop',
+  net: 'hoop',
+  backboard: 'hoop',
+  person: 'player',
+  players: 'player',
+  player: 'player',
+  ref: 'referee',
+  referee: 'referee',
+};
+
+export const mappingFor = (
+  sport: string,
+  requested: string[],
+  /**
+   * The model's own classes, when it is not a COCO model. Supplying this is the
+   * difference between a basketball model working and being silently misread —
+   * its index 1 is a hoop, and COCO's index 1 is a bicycle.
+   */
+  custom?: Record<number, string> | null,
+): ClassMapping => {
+  const table = custom ?? COCO_TO_SPORT[sport] ?? {};
   const produces = [...new Set(Object.values(table))].filter(
     (name) => requested.length === 0 || requested.includes(name),
   );
