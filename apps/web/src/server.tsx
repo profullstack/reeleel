@@ -68,7 +68,7 @@ import { ForgotPage, LoginPage, MessagePage, RegisterPage, ResetPage, VerifyNoti
 import { DoctorPage, ErrorPage, ProjectPage, ProjectsPage } from './views/pages.js';
 import { ReviewPage } from './views/review.js';
 import type { Flash } from './views/pages.js';
-import { ICON_SVG, MANIFEST, SERVICE_WORKER } from './pwa.js';
+import { MANIFEST, SERVICE_WORKER } from './pwa.js';
 
 const publicDir = path.join(fileURLToPath(new URL('../', import.meta.url)), 'public');
 
@@ -168,13 +168,6 @@ export const createWebApp = (): Hono => {
 
   app.get('/manifest.webmanifest', (c) =>
     c.json(MANIFEST, 200, { 'cache-control': 'public, max-age=3600' }),
-  );
-
-  app.get('/icon.svg', (c) =>
-    c.body(ICON_SVG, 200, {
-      'content-type': 'image/svg+xml',
-      'cache-control': 'public, max-age=86400',
-    }),
   );
 
   app.get('/sw.js', (c) =>

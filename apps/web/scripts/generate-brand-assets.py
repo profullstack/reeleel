@@ -39,9 +39,11 @@ def save(im: Image.Image, name: str) -> None:
 
 print("logo (wordmark, for the header):")
 logo = trimmed("logo.png")
-# The mark is mascot-over-wordmark at roughly 1.4:1, so it needs real height to
-# stay legible — a 40px-tall version renders the word at about eight pixels.
-for height, name in ((96, "logo.png"), (192, "logo@2x.png")):
+# Displayed at 148px. The 1x is generated at exactly that height and the 2x at
+# double, so neither is ever upscaled by the browser — a mark rendered from a
+# source smaller than its display size is the whole reason the first pass
+# looked blurry.
+for height, name in ((148, "logo.png"), (296, "logo@2x.png")):
     width = round(logo.width * height / logo.height)
     save(logo.resize((width, height), Image.LANCZOS), name)
 

@@ -25,8 +25,10 @@ const STYLES = `
     font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   }
   header {
-    display: flex; align-items: baseline; gap: 1rem;
-    padding: 1rem 1.25rem; border-bottom: 1px solid var(--line);
+    /* Centred, not baseline: the mark is 148px tall and a baseline
+       alignment would strand the nav at the bottom of it. */
+    display: flex; align-items: center; gap: 1rem;
+    padding: .5rem 1.25rem; border-bottom: 1px solid var(--line);
   }
   header a { color: inherit; text-decoration: none; font-weight: 650; }
   header nav { margin-left: auto; display: flex; gap: 1rem; }
@@ -161,11 +163,9 @@ export const Layout: FC<PropsWithChildren<{ title: string }>> = ({ title, childr
       <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
       <title>{title} · ReelEel</title>
       <link rel="manifest" href="/manifest.webmanifest" />
-      {/* PNG first for the browsers that ignore SVG icons; the SVG stays as a
-          scalable fallback rather than being thrown away. */}
+      {/* Real PNGs at the sizes browsers and installers ask for. */}
       <link rel="icon" href="/brand/favicon-32.png" sizes="32x32" type="image/png" />
       <link rel="icon" href="/brand/favicon-16.png" sizes="16x16" type="image/png" />
-      <link rel="icon" href="/icon.svg" type="image/svg+xml" />
       <link rel="apple-touch-icon" href="/brand/apple-touch-icon.png" sizes="180x180" />
       <meta name="theme-color" content="#0f766e" />
       <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -189,12 +189,11 @@ export const Layout: FC<PropsWithChildren<{ title: string }>> = ({ title, childr
             src="/brand/logo.png"
             srcset="/brand/logo.png 1x, /brand/logo@2x.png 2x"
             alt="ReelEel"
-            width="68"
-            height="48"
-            style="height:48px;width:auto;display:block"
+            width="207"
+            height="148"
+            style="height:148px;width:auto;display:block"
           />
         </a>
-        <span class="muted">local-first sports highlights</span>
         <nav>
           <a href="/">Projects</a>
           <a href="/doctor">Doctor</a>
