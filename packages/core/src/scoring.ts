@@ -341,7 +341,18 @@ export const SIGNALS: Record<string, SignalFn> = {
     if (context.focal === null) return null;
     const before = focalVelocityAt(context, ts - 0.5);
     const after = focalVelocityAt(context, ts + 0.5);
-    if (before === null || after === null) return 0;
+    /**
+     * Off screen is unmeasured, not motionless.
+     *
+     * This returned 0, which is the same mistake ball proximity used to make and
+     * costs more, because an athlete is absent from far more of a game than the
+     * ball is. Bound to a ten-frame fragment of a five-minute game, this signal
+     * and `toward_goal` between them kept 0.35 of the weight in the denominator
+     * and contributed nothing to the numerator for 99.9% of the footage — and
+     * reported themselves as "measurable" to the diagnosis, which then told the
+     * user the threshold was reachable when it was arithmetically not.
+     */
+    if (before === null || after === null) return null;
     const delta = Math.abs(magnitude(after) - magnitude(before));
     // Treat a 10%-of-diagonal-per-second change as a full-strength burst.
     return clamp01(delta / (context.diagonal * 0.1));
@@ -351,12 +362,15 @@ export const SIGNALS: Record<string, SignalFn> = {
     if (context.focal === null || context.goals.length === 0) return null;
     const player = focalAt(context, ts);
     const velocity = focalVelocityAt(context, ts);
-    if (player === null || velocity === null || magnitude(velocity) < 1) return 0;
+    // Absent athlete: unmeasurable. Present but stationary: a real zero.
+    if (player === null || velocity === null) return null;
+    if (magnitude(velocity) < 1) return 0;
 
     const goalPoints = context.goals
       .map((goal) => sampleAt(goal, ts))
       .filter((p): p is Point => p !== null);
-    if (goalPoints.length === 0) return 0;
+    // No rim in frame at this instant is no evidence either way.
+    if (goalPoints.length === 0) return null;
 
     const best = goalPoints.reduce((closest, point) =>
       distance(player, point) < distance(player, closest) ? point : closest,
@@ -370,7 +384,9 @@ export const SIGNALS: Record<string, SignalFn> = {
     const goalPoints = context.goals
       .map((goal) => sampleAt(goal, ts))
       .filter((p): p is Point => p !== null);
-    if (goalPoints.length === 0) return 0;
+    // The rim exists somewhere in the footage but is not in this frame; that is
+    // not a quiet key, it is no measurement.
+    if (goalPoints.length === 0) return null;
 
     const near = context.others.filter((track) => {
       const point = sampleAt(track, ts);
@@ -387,7 +403,8 @@ export const SIGNALS: Record<string, SignalFn> = {
       .map((track) => velocityAt(track, ts))
       .filter((v): v is Point => v !== null)
       .map(magnitude);
-    if (speeds.length === 0) return 0;
+    // Nobody on screen at all: unmeasured, rather than a still court.
+    if (speeds.length === 0) return null;
     const mean = speeds.reduce((sum, s) => sum + s, 0) / speeds.length;
     return clamp01((mean / context.baselineSpeed - 1) / 1.5);
   },
@@ -470,6 +487,20 @@ export interface ScoringDiagnosis {
   /** False when the threshold is unreachable no matter what happens on screen. */
   reachable: boolean;
   focalBound: boolean;
+  /**
+   * Seconds the focal athlete is actually on screen, and across how many
+   * fragments.
+   *
+   * "Athlete identified: yes" was the whole of what a user was told, and it is
+   * true of a binding to a ten-frame fragment of a five-minute game just as it
+   * is of a binding that follows the child all afternoon. The first cannot
+   * produce a moment and the second can, so the flag on its own sent people to
+   * re-shoot footage that was never the problem.
+   */
+  focalSeconds: number;
+  focalTrackCount: number;
+  /** Length of the footage, so focal coverage can be read as a fraction. */
+  durationSeconds: number;
   /** How many tracks of each class the detector produced. */
   tracksByClass: Record<string, number>;
   /** Longest single track, in seconds — short ones mean fragmented tracking. */
@@ -479,6 +510,27 @@ export interface ScoringDiagnosis {
   /** Signals that never had data, and the weight they no longer consume. */
   unmeasurable: string[];
 }
+
+/**
+ * Seconds the stitched athlete is genuinely followable — the spans scoring can
+ * read, not first-to-last.
+ *
+ * Gaps longer than `MAX_FOCAL_GAP` are exactly the ones `focalAt` refuses to
+ * interpolate across, so counting them would promise coverage the signals
+ * cannot use.
+ */
+const focalCoverageSeconds = (focal: TrackSeries | null): number => {
+  if (focal === null) return 0;
+  let covered = 0;
+  for (let i = 1; i < focal.samples.length; i += 1) {
+    const previous = focal.samples[i - 1];
+    const current = focal.samples[i];
+    if (previous === undefined || current === undefined) continue;
+    const span = current.ts - previous.ts;
+    if (span > 0 && span <= MAX_FOCAL_GAP) covered += span;
+  }
+  return covered;
+};
 
 export const explainScoring = (input: ScoringInput, plugin: SportPlugin): ScoringDiagnosis => {
   const step = input.windowSeconds ?? 1;
@@ -531,6 +583,10 @@ export const explainScoring = (input: ScoringInput, plugin: SportPlugin): Scorin
     ceiling,
     reachable: ceiling >= plugin.moments.minScore,
     focalBound: context.focal !== null,
+    focalSeconds: focalCoverageSeconds(context.focal),
+    focalTrackCount:
+      input.focalTrackIds?.length ?? (input.focalTrackId === null ? 0 : 1),
+    durationSeconds: input.durationSeconds,
     tracksByClass,
     longestTrackSeconds,
     measurable: [...measurable],

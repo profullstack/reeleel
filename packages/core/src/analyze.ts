@@ -9,7 +9,7 @@ import { run } from './ffmpeg.js';
 import { createJob, logJob, updateJob } from './jobs.js';
 import { getFocalAthlete } from './athletes.js';
 import { generateMoments } from './moments.js';
-import { generateProxy, generateThumbnails } from './media.js';
+import { generateProxy, generateThumbnails, PROXY_HEIGHT } from './media.js';
 import { readManifest } from './projects.js';
 import { clearTracks, createTrack, rebindAthletes, snapshotAthleteBindings } from './tracks.js';
 import type { Job, Preset } from './types.js';
@@ -49,6 +49,34 @@ export const PRESET_SETTINGS: Record<Exclude<Preset, 'custom'>, PresetSettings> 
    * because nobody's existing runtime should regress silently.
    */
   thorough: { frameStride: 2, inferenceSize: 1280, minConfidence: 0.25, useProxy: false, tileGrid: 2 },
+};
+
+/**
+ * Which file the detector should actually read.
+ *
+ * The proxy is only worth detecting from when it is at least as tall as the
+ * frame the worker will hand the model. `useProxy` was obeyed unconditionally,
+ * and the 540p editing proxy is shorter than every inference size above `fast`.
+ * The worker decodes to its own input size regardless, so a 540p proxy was
+ * *upscaled* — the same inference cost for strictly less picture. Measured on a
+ * 1080p game, the identical preset found 145,975 detections across 3,948 tracks
+ * from the source against 67,985 across 1,415 from the proxy; the ball, a
+ * handful of pixels to begin with, is what goes first. The saving was only ever
+ * decode time.
+ */
+export const detectionInputFor = (
+  settings: PresetSettings,
+  video: { path: string; proxyPath: string | null },
+  proxyExists: boolean,
+): { input: string; usedProxy: boolean; proxyTooSmall: boolean } => {
+  const proxyTooSmall = settings.useProxy && settings.inferenceSize > PROXY_HEIGHT;
+  const usedProxy =
+    settings.useProxy && !proxyTooSmall && video.proxyPath !== null && proxyExists;
+  return {
+    input: usedProxy && video.proxyPath !== null ? video.proxyPath : video.path,
+    usedProxy,
+    proxyTooSmall,
+  };
 };
 
 export const settingsForPreset = (preset: Preset): PresetSettings => {
@@ -289,10 +317,20 @@ export const analyzeProject = async (
         const share = (index + 1) / refreshed.length;
         await stage('detection', 0.2 + 0.5 * share, path.basename(video.path));
 
-        const input =
-          settings.useProxy && video.proxyPath !== null && existsSync(video.proxyPath)
-            ? video.proxyPath
-            : video.path;
+        const choice = detectionInputFor(
+          settings,
+          video,
+          video.proxyPath !== null && existsSync(video.proxyPath),
+        );
+        const input = choice.input;
+        if (choice.proxyTooSmall) {
+          await logJob(
+            root,
+            job.id,
+            `detecting from the original: the ${PROXY_HEIGHT}p proxy is smaller than the ` +
+              `${settings.inferenceSize}px this preset detects at, so it would only lose detail.`,
+          );
+        }
 
         /**
          * Detection is the long pole — minutes of CPU inference on a full game
@@ -558,7 +596,13 @@ export const analyzeProject = async (
           root,
           job.id,
           `what was seen: ${classes}; longest track ${diagnosis.longestTrackSeconds.toFixed(1)}s; ` +
-            `athlete identified: ${diagnosis.focalBound ? 'yes' : 'no'}`,
+            `athlete identified: ${
+              diagnosis.focalBound
+                ? `yes, on screen ${diagnosis.focalSeconds.toFixed(1)}s of ` +
+                  `${diagnosis.durationSeconds.toFixed(0)}s across ` +
+                  `${diagnosis.focalTrackCount} track(s)`
+                : 'no'
+            }`,
           'warn',
         );
         await logJob(
@@ -571,6 +615,32 @@ export const analyzeProject = async (
               : ` (no data for: ${diagnosis.unmeasurable.join(', ')})`),
           'warn',
         );
+        /**
+         * The binding is thin: said whether or not the threshold was reachable
+         * in principle.
+         *
+         * Reachability is computed over the whole footage, so a rim visible for
+         * half a minute can hold the ceiling above the threshold while the
+         * athlete every focal signal depends on is present for a fraction of a
+         * second. Production hit exactly that — a binding to a ten-frame
+         * fragment of a five-minute game — and every line here read plausibly:
+         * tracks found, athlete identified, threshold reachable, footage too
+         * dull. The one number that showed the problem was not among them.
+         */
+        const coverage =
+          diagnosis.durationSeconds > 0 ? diagnosis.focalSeconds / diagnosis.durationSeconds : 0;
+        if (diagnosis.focalBound && coverage < 0.05) {
+          await logJob(
+            root,
+            job.id,
+            `your athlete is only on screen for ${diagnosis.focalSeconds.toFixed(1)}s of ` +
+              `${diagnosis.durationSeconds.toFixed(0)}s (${(coverage * 100).toFixed(1)}%), so every ` +
+              'signal that follows them is dark for the rest of the game. That is almost certainly ' +
+              'the reason, not the footage. Open "Identify your athlete" and pick them again — ' +
+              'choose every fragment of them you can see, not just one.',
+            'warn',
+          );
+        }
         if (!diagnosis.reachable) {
           // The important case, and the one the old message got wrong.
           const because = !diagnosis.focalBound
