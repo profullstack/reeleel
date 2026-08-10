@@ -16,6 +16,7 @@ import {
   clipsFromMoments,
   createProject,
   createReel,
+  getAthlete,
   getJob,
   isReelEelError,
   listAthleteCandidates,
@@ -507,7 +508,22 @@ export const registerActions = (app: Hono): void => {
       const trackId = typeof body.trackId === 'string' ? body.trackId.trim() : '';
       if (trackId.length === 0) throw new UploadError('INVALID_INPUT', 'Choose a track first.');
 
-      const athleteId = c.req.param('id') ?? '';
+      /**
+       * `new` creates the athlete on the spot.
+       *
+       * Identifying an athlete is the one step scoring cannot proceed without,
+       * and it used to require having already created an athlete record — a
+       * prerequisite the UI hid until you had satisfied it. Someone who had
+       * never added an athlete saw a collapsed panel offering nothing to click,
+       * and every run they made was mathematically incapable of producing a
+       * moment. Picking a face is now the whole of the setup.
+       */
+      const requested = c.req.param('id') ?? '';
+      const athlete =
+        requested === 'new'
+          ? await addAthlete(root, { name: 'My athlete' })
+          : await getAthlete(root, requested);
+      const athleteId = athlete.id;
       // Following and being bound to a track are different things; a picked
       // athlete is obviously the one to follow.
       await updateAthlete(root, athleteId, { focalTrackId: trackId, focal: true });

@@ -104,14 +104,17 @@ const Identify = ({ base }: { base: string }) => {
   }, [base]);
 
   const choose = async (candidate: Candidate): Promise<void> => {
-    if (athleteId === '') {
-      setError('Add an athlete first, then say which tracked player is them.');
-      return;
-    }
+    /**
+     * No athlete yet is not a reason to refuse — it is the ordinary first-run
+     * state, and refusing here left the only mandatory step in the product with
+     * no way to complete it. `new` creates the athlete server-side, so picking a
+     * face is the entire setup.
+     */
+    const target = athleteId === '' ? 'new' : athleteId;
     setBusy(candidate.trackId);
     setError(null);
     try {
-      const response = await fetch(`${base}/athletes/${athleteId}/track`, {
+      const response = await fetch(`${base}/athletes/${target}/track`, {
         method: 'POST',
         headers: { accept: 'application/json', 'content-type': 'application/json' },
         body: JSON.stringify({ trackId: candidate.trackId }),
@@ -139,9 +142,7 @@ const Identify = ({ base }: { base: string }) => {
       )}
 
       {athletes.length === 0 ? (
-        <p class="muted">
-          Add an athlete above first — the choice below binds a tracked player to them.
-        </p>
+        <p class="muted">Click your athlete below — we'll create them for you.</p>
       ) : (
         <div class="row" style="margin-bottom:.75rem">
           <label for="who" style="margin:0">

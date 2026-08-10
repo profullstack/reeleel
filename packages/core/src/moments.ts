@@ -3,8 +3,8 @@ import { all, changes, execute, get, nullableBool, parseJson, projectDb, toNumbe
 import { ReelEelError, invalidInput, notFound } from './errors.js';
 import { newId, nowIso } from './ids.js';
 import { readManifest } from './projects.js';
-import { computeMoments } from './scoring.js';
-import type { ScoringInput } from './scoring.js';
+import { computeMoments, explainScoring } from './scoring.js';
+import type { ScoringDiagnosis, ScoringInput } from './scoring.js';
 import { loadTrackSeries } from './tracks.js';
 import type { SuggestedMoment } from './types.js';
 import { listVideos } from './videos.js';
@@ -224,6 +224,12 @@ export interface GenerateMomentsResult {
   generated: number;
   replaced: number;
   skippedVideos: string[];
+  /**
+   * Why each video scored the way it did. Computed always, not only on failure:
+   * a run that produced two moments when it should have produced twenty is just
+   * as much a question, and answering it later means re-running the scorer.
+   */
+  diagnoses: { videoId: string; diagnosis: ScoringDiagnosis }[];
 }
 
 /**
@@ -261,6 +267,7 @@ export const generateMoments = async (
 
   let generated = 0;
   const skippedVideos: string[] = [];
+  const diagnoses: { videoId: string; diagnosis: ScoringDiagnosis }[] = [];
 
   for (const video of videos) {
     const tracks = await loadTrackSeries(root, video.id);
@@ -278,6 +285,8 @@ export const generateMoments = async (
     };
     if (options.windowSeconds !== undefined) input.windowSeconds = options.windowSeconds;
 
+    diagnoses.push({ videoId: video.id, diagnosis: explainScoring(input, plugin) });
+
     for (const scored of computeMoments(input, plugin)) {
       await addMoment(root, {
         start: scored.start,
@@ -293,5 +302,5 @@ export const generateMoments = async (
     }
   }
 
-  return { generated, replaced, skippedVideos };
+  return { generated, replaced, skippedVideos, diagnoses };
 };
