@@ -25,16 +25,42 @@ export interface PresetSettings {
   minConfidence: number;
   /** Analyze the proxy instead of the original. */
   useProxy: boolean;
+  /**
+   * Slice each frame into this many tiles per axis and detect in each at the
+   * model's native resolution. 1 leaves it off.
+   *
+   * The shipped detector has a fixed 416x416 input, so a whole 1080p frame is
+   * scaled by 0.217 before it is seen. Players survive that; the ball does not
+   * — measured at 0.54 confidence full-frame against 0.89 from a tile, with
+   * frames the full-frame pass missed entirely coming back. It is opt-in
+   * because it costs tiles^2 + 1 inferences per frame.
+   */
+  tileGrid: number;
 }
 
 export const PRESET_SETTINGS: Record<Exclude<Preset, 'custom'>, PresetSettings> = {
   // CPU-only is a hard requirement, so "fast" has to be genuinely cheap.
-  fast: { frameStride: 5, inferenceSize: 512, minConfidence: 0.35, useProxy: true },
-  balanced: { frameStride: 2, inferenceSize: 768, minConfidence: 0.3, useProxy: true },
-  accurate: { frameStride: 1, inferenceSize: 1280, minConfidence: 0.25, useProxy: false },
+  fast: { frameStride: 5, inferenceSize: 512, minConfidence: 0.35, useProxy: true, tileGrid: 1 },
+  balanced: { frameStride: 2, inferenceSize: 768, minConfidence: 0.3, useProxy: true, tileGrid: 1 },
+  accurate: { frameStride: 1, inferenceSize: 1280, minConfidence: 0.25, useProxy: false, tileGrid: 1 },
+  /**
+   * The one that can see the ball. Five inferences per frame instead of one,
+   * so it is minutes rather than seconds — offered as a choice, not a default,
+   * because nobody's existing runtime should regress silently.
+   */
+  thorough: { frameStride: 2, inferenceSize: 1280, minConfidence: 0.25, useProxy: false, tileGrid: 2 },
 };
 
 export const settingsForPreset = (preset: Preset): PresetSettings => {
+  /**
+   * The web form and the API both cast whatever string arrives into `Preset`
+   * without checking it, so an unknown value used to index a record that does
+   * not have it and crash on the first field access. Falling back keeps a
+   * hand-crafted post from taking a run down.
+   */
+  if (preset !== 'custom' && PRESET_SETTINGS[preset] === undefined) {
+    return PRESET_SETTINGS.balanced;
+  }
   if (preset === 'custom') {
     const config = loadConfig();
     return {
@@ -42,6 +68,7 @@ export const settingsForPreset = (preset: Preset): PresetSettings => {
       inferenceSize: 768,
       minConfidence: 0.3,
       useProxy: true,
+      tileGrid: 1,
     };
   }
   return PRESET_SETTINGS[preset];
@@ -359,6 +386,8 @@ export const analyzeProject = async (
             String(settings.inferenceSize),
             '--min-confidence',
             String(settings.minConfidence),
+            '--tile-grid',
+            String(settings.tileGrid),
             '--tracker',
             plugin.tracker.algorithm,
             '--backend',

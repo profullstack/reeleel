@@ -6,6 +6,13 @@ import { mappingFor } from './classes.js';
 import { frameStream, toTensor, viewFor } from './frames.js';
 import { clampBox, nonMaxSuppression, unletterbox } from './geometry.js';
 import type { Detection } from './geometry.js';
+import {
+  decodedSize,
+  downscaleTensor,
+  passesPerFrame,
+  tileOrigins,
+  tileTensor,
+} from './tiling.js';
 import { ByteTracker } from './tracker.js';
 import type { Track } from './tracker.js';
 import { decodeYolox } from './yolox.js';
@@ -17,6 +24,16 @@ export interface PipelineOptions {
   classes: string[];
   frameStride: number;
   inferenceSize: number;
+  /**
+   * Slice each frame into `tileGrid` x `tileGrid` tiles and run the model on
+   * each at native resolution, in addition to the whole frame. 1 disables it.
+   *
+   * The ball is the reason. With the whole frame squeezed into a fixed 416x416
+   * input it is detected at 0.54 confidence where it is found at all; from a
+   * tile the same weights score 0.89, and frames the full-frame pass misses
+   * entirely come back. It costs grid^2 + 1 inferences per frame.
+   */
+  tileGrid?: number;
   minConfidence: number;
   iouThreshold: number;
   sourceWidth: number;
@@ -104,13 +121,29 @@ export const runPipeline = async (options: PipelineOptions): Promise<PipelineRes
     );
   }
 
+  /**
+   * Decode larger than the model input when tiling, so each tile carries real
+   * pixels rather than a shrunken copy. Letterboxing is computed against the
+   * decoded frame, which is the space every detection is mapped back into.
+   */
+  const grid = Math.max(1, Math.floor(options.tileGrid ?? 1));
+  const decoded = decodedSize(size, grid);
+  const origins = tileOrigins(size, grid);
+  if (grid > 1) {
+    process.stderr.write(
+      `note: tiling ${grid}x${grid} at ${decoded}x${decoded} — ` +
+        `${passesPerFrame(grid)} inferences per frame, for small objects the ` +
+        `whole-frame pass cannot resolve.\n`,
+    );
+  }
+
   const view = viewFor({
     input: options.input,
     ffmpegPath: ffmpeg,
     sourceWidth: options.sourceWidth,
     sourceHeight: options.sourceHeight,
-    targetWidth: size,
-    targetHeight: size,
+    targetWidth: decoded,
+    targetHeight: decoded,
     frameStride: options.frameStride,
     fps: options.fps,
   });
@@ -129,31 +162,72 @@ export const runPipeline = async (options: PipelineOptions): Promise<PipelineRes
     ffmpegPath: ffmpeg,
     sourceWidth: options.sourceWidth,
     sourceHeight: options.sourceHeight,
-    targetWidth: size,
-    targetHeight: size,
+    targetWidth: decoded,
+    targetHeight: decoded,
     frameStride: options.frameStride,
     fps: options.fps,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   })) {
     if (options.signal?.aborted === true) break;
 
-    const tensor = new ort.Tensor('float32', toTensor(frame.pixels, size, size), [1, 3, size, size]);
-    const output = await session.run({ [inputName]: tensor });
-    const head = output[outputName];
-    if (head === undefined) continue;
+    /** One pass of the model, with results placed in decoded-frame space. */
+    const runPass = async (
+      tensorData: Float32Array,
+      offsetX: number,
+      offsetY: number,
+      scale: number,
+    ): Promise<Detection[]> => {
+      const tensor = new ort.Tensor('float32', tensorData, [1, 3, size, size]);
+      const output = await session.run({ [inputName]: tensor });
+      const head = output[outputName];
+      if (head === undefined) return [];
 
-    const raw = head.data as Float32Array;
-    const attributes = head.dims[head.dims.length - 1] ?? 0;
+      const raw = head.data as Float32Array;
+      const attributes = head.dims[head.dims.length - 1] ?? 0;
+      return decodeYolox(raw, attributes, {
+        inputWidth: size,
+        inputHeight: size,
+        scoreThreshold: options.minConfidence,
+      }).map((d) => ({
+        ...d,
+        x: d.x * scale + offsetX,
+        y: d.y * scale + offsetY,
+        w: d.w * scale,
+        h: d.h * scale,
+      }));
+    };
 
-    const decoded = decodeYolox(raw, attributes, {
-      inputWidth: size,
-      inputHeight: size,
-      scoreThreshold: options.minConfidence,
-    });
+    const found: Detection[] =
+      grid <= 1
+        ? await runPass(toTensor(frame.pixels, size, size), 0, 0, 1)
+        : // The whole frame, because a close-up player is larger than a tile
+          // and is only ever whole in the full view...
+          (await runPass(
+            downscaleTensor(frame.pixels, decoded, decoded, size),
+            0,
+            0,
+            decoded / size,
+          )).concat(
+            // ...then each tile at native resolution, which is what lets the
+            // model resolve the ball at all.
+            (
+              await Promise.all(
+                origins.map((origin) =>
+                  runPass(
+                    tileTensor(frame.pixels, decoded, origin, size),
+                    origin.x,
+                    origin.y,
+                    1,
+                  ),
+                ),
+              )
+            ).flat(),
+          );
 
     // Drop classes this sport does not care about before NMS, so a stray
-    // "bench" never suppresses a player.
-    const relevant = decoded.filter((d) => mapping.byIndex[d.classId] !== undefined);
+    // "bench" never suppresses a player. NMS also fuses the duplicates that
+    // overlapping tiles and the full-frame pass necessarily produce.
+    const relevant = found.filter((d) => mapping.byIndex[d.classId] !== undefined);
     const kept = nonMaxSuppression(relevant, options.iouThreshold);
 
     const inSourceSpace: Detection[] = kept.map((detection) => {

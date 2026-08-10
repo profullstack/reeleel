@@ -1,5 +1,5 @@
 /** Analysis quality/speed presets from the PRD. */
-export const PRESETS = ['fast', 'balanced', 'accurate', 'custom'] as const;
+export const PRESETS = ['fast', 'balanced', 'accurate', 'thorough', 'custom'] as const;
 export type Preset = (typeof PRESETS)[number];
 
 /** Virtual Cameraman modes. `follow-ball` is experimental. */
