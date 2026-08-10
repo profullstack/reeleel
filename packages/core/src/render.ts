@@ -174,7 +174,22 @@ export const renderClip = async (
     aspect,
     options.noCrop === undefined ? {} : { noCrop: options.noCrop },
   );
-  const videoFilter = fades.video === '' ? cropFilter : `${cropFilter},${fades.video}`;
+  /**
+   * Rebase time to zero, so every expression here reads clip-relative `t`.
+   *
+   * The seek now happens on the *input* — see the argument list below. As an
+   * output option it ran after filtering, which meant the graph processed the
+   * whole video from 0:00 and only then discarded everything before the clip.
+   * Every surviving frame of a clip starting at 2:16 therefore arrived at
+   * t≈136, long past `fade=t=out:st=4.65`, and came out pure black: measured
+   * YAVG 16 against 123 for the same frame with the fade removed. The crop
+   * path, which is explicitly rebased by `clip.start`, was being evaluated at
+   * the wrong instant for the same reason — silently, since a wrong crop still
+   * looks like a picture.
+   */
+  const rebase = 'setpts=PTS-STARTPTS';
+  const videoFilter = [rebase, cropFilter, fades.video].filter((part) => part !== '').join(',');
+  const audioFilter = fades.audio === '' ? '' : `asetpts=PTS-STARTPTS,${fades.audio}`;
 
   const result = await run(
     ffmpeg,
@@ -183,16 +198,26 @@ export const renderClip = async (
       '-loglevel',
       'error',
       '-y',
-      // Accurate seek: -ss after -i costs a decode but lands on the right frame.
-      '-i',
-      video.path,
+      /**
+       * Seek on the input, not the output.
+       *
+       * As an output option `-ss` runs after the filter graph, so filters saw
+       * the entire video from 0:00 and every kept frame carried a timestamp of
+       * clip.start or later — which blacked out every clip the moment fades
+       * were added. Input seeking hands the graph only the clip, and is
+       * accurate in modern FFmpeg because it decodes from the preceding
+       * keyframe and discards. It is also enormously faster: a clip at 2:16
+       * took 3 seconds instead of decoding 136 seconds of video to throw away.
+       */
       '-ss',
       formatTimecode(clip.start),
-      '-to',
-      formatTimecode(clip.end),
+      '-i',
+      video.path,
+      '-t',
+      formatTimecode(Math.max(0, clip.end - clip.start)),
       '-vf',
       videoFilter,
-      ...(fades.audio === '' ? [] : ['-af', fades.audio]),
+      ...(audioFilter === '' ? [] : ['-af', audioFilter]),
       '-r',
       String(options.fps ?? 30),
       '-c:v',

@@ -157,6 +157,8 @@ export interface Clip {
   order: number;
   cameraMode: CameraMode;
   title: string | null;
+  /** Made or kept by the user; regeneration leaves these alone. */
+  manual: boolean;
   renderedPath: string | null;
   createdAt: string;
   updatedAt: string;
