@@ -53,6 +53,25 @@ describe('watching a suggested moment', () => {
     expect(html).toContain('/projects/prj_1/videos/vid_1/stream#t=136.20,141.70');
   });
 
+  /**
+   * Twice now something necessary has been folded into a <details> and gone
+   * unnoticed for hours — the identify panel, then this. An unwatched player
+   * already costs nothing, so there is no reason to hide it.
+   */
+  it('is visible without being unfolded first', async () => {
+    const html = await render([moment({})]);
+    const anchor = html.indexOf('class="moment-player"');
+    expect(anchor).toBeGreaterThan(-1);
+    expect(html.slice(anchor - 200, anchor)).not.toContain('<details');
+  });
+
+  it('gives the overlay what it needs to draw the right window', async () => {
+    const html = await render([moment({})]);
+    expect(html).toContain('data-video="/projects/prj_1/videos/vid_1/tracks"');
+    expect(html).toContain('data-start="136.2"');
+    expect(html).toContain('data-end="141.7"');
+  });
+
   it('fetches nothing until the moment is opened', async () => {
     // Four suggestions must not mean four video downloads on page load.
     const html = await render([moment({}), moment({ id: 'mom_2' })]);

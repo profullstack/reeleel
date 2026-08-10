@@ -459,16 +459,26 @@ export const ProjectPage: FC<ProjectView> = ({
                     span; `preload="none"` means nothing is fetched until the
                     moment is opened, so a page of suggestions costs nothing. */}
                 {moment.videoId === null ? null : (
-                  <details style="margin-top:.5rem">
-                    <summary>Play {duration(moment.start)} → {duration(moment.end)}</summary>
+                  /* Visible, not folded away. Twice now something necessary has
+                     been hidden behind a <summary> and gone unnoticed for
+                     hours; `preload="none"` already means an unwatched player
+                     costs nothing, so there is no reason to hide it. The island
+                     overlays detection boxes on this element when it loads. */
+                  <div
+                    class="moment-player"
+                    data-video={`${base}/videos/${moment.videoId}/tracks`}
+                    data-start={String(moment.start)}
+                    data-end={String(moment.end)}
+                    style="position:relative;margin-top:.5rem"
+                  >
                     <video
                       controls
                       preload="none"
                       playsinline
-                      style="width:100%;max-height:60vh;margin-top:.5rem;border-radius:.4rem;background:#000"
+                      style="width:100%;max-height:60vh;border-radius:.4rem;background:#000;display:block"
                       src={`${base}/videos/${moment.videoId}/stream#t=${moment.start.toFixed(2)},${moment.end.toFixed(2)}`}
                     />
-                  </details>
+                  </div>
                 )}
               </div>
             ))}

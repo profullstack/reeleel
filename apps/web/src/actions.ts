@@ -19,7 +19,9 @@ import {
   createProject,
   createReel,
   getAthlete,
+  getFocalAthlete,
   getJob,
+  loadTrackSeries,
   isReelEelError,
   listAthleteCandidates,
   listAthletes,
@@ -763,6 +765,69 @@ export const registerActions = (app: Hono): void => {
       );
     } catch (error) {
       return c.text(failed(error), 500);
+    }
+  });
+
+  /**
+   * What the detector saw, over one slice of time.
+   *
+   * "It hasn't really detected anybody" is unanswerable from a list of numbers.
+   * Boxes drawn on the footage answer it in a second — and answer the harder
+   * question too, which is whether the thing being followed is actually your
+   * child. Sent as data for the browser to draw rather than burned into a
+   * re-encoded video: no ffmpeg, no wait, and the focal athlete can be
+   * distinguished from everyone else.
+   */
+  app.get('/projects/:ref/videos/:id/tracks', async (c) => {
+    try {
+      const root = await rootOf(c);
+      const videoId = c.req.param('id') ?? '';
+      const known = (await listVideos(root)).find((entry) => entry.id === videoId);
+      if (known === undefined) return c.json({ ok: false, error: 'No such video' }, 404);
+
+      const from = Number(c.req.query('from') ?? 0);
+      const to = Number(c.req.query('to') ?? 0);
+      if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
+        return c.json({ ok: false, error: 'Bad time range' }, 400);
+      }
+
+      const focal = await getFocalAthlete(root);
+      const focalIds = focal === null ? [] : await tracksForAthlete(root, focal.id);
+      const focalSet = new Set([
+        ...focalIds,
+        ...(focal?.focalTrackId === null || focal?.focalTrackId === undefined
+          ? []
+          : [focal.focalTrackId]),
+      ]);
+
+      // Boxes are stored in source pixels; the player shows the proxy, so the
+      // client is told the frame it should scale against.
+      const series = await loadTrackSeries(root, videoId);
+      const tracks = series
+        .map((track) => ({
+          id: track.id,
+          className: track.className,
+          focal: focalSet.has(track.id),
+          samples: track.samples
+            .filter((sample) => sample.ts >= from && sample.ts <= to)
+            .map((sample) => ({
+              ts: Number(sample.ts.toFixed(3)),
+              x: Math.round(sample.x),
+              y: Math.round(sample.y),
+              w: Math.round(sample.w),
+              h: Math.round(sample.h),
+            })),
+        }))
+        .filter((track) => track.samples.length > 0);
+
+      return c.json({
+        ok: true,
+        frameWidth: known.probe?.video?.width ?? 1920,
+        frameHeight: known.probe?.video?.height ?? 1080,
+        tracks,
+      });
+    } catch (error) {
+      return uploadJson(c, error);
     }
   });
 
