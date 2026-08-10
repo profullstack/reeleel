@@ -1,5 +1,5 @@
 /** @jsxImportSource hono/jsx */
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -121,6 +121,46 @@ export const createWebApp = (): Hono => {
       rewriteRequestPath: () => '/client.js',
     }),
   );
+
+  /**
+   * Brand assets, served before sign-in so the login page is not anonymous.
+   *
+   * The list is explicit rather than a wildcard: `publicDir` is a build output
+   * directory, and serving whatever happens to be in it is how a source map or
+   * a stray artefact becomes a public URL.
+   */
+  const BRAND_FILES = new Set([
+    'logo.png',
+    'logo@2x.png',
+    'icon-512.png',
+    'icon-192.png',
+    'apple-touch-icon.png',
+    'favicon-32.png',
+    'favicon-16.png',
+    'favicon.ico',
+  ]);
+  app.get('/brand/:file', (c) => {
+    const file = c.req.param('file') ?? '';
+    if (!BRAND_FILES.has(file)) return c.notFound();
+    const onDisk = path.join(publicDir, file);
+    if (!existsSync(onDisk)) return c.notFound();
+    return c.body(readFileSync(onDisk), 200, {
+      'content-type': file.endsWith('.ico') ? 'image/x-icon' : 'image/png',
+      // Immutable in practice: a new logo ships as a new deploy.
+      'cache-control': 'public, max-age=604800',
+    });
+  });
+
+  // Browsers ask for this whether or not it is linked; answering with the
+  // mascot beats answering with a 404 in every log.
+  app.get('/favicon.ico', (c) => {
+    const onDisk = path.join(publicDir, 'favicon.ico');
+    if (!existsSync(onDisk)) return c.notFound();
+    return c.body(readFileSync(onDisk), 200, {
+      'content-type': 'image/x-icon',
+      'cache-control': 'public, max-age=604800',
+    });
+  });
 
   // ── Sign in ───────────────────────────────────────────────────────────────
 
