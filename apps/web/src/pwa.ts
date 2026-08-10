@@ -7,15 +7,6 @@
  * shared device. It caches the app shell and the client bundle only.
  */
 
-/** Inline SVG icon, embedded so the app installs without extra asset files. */
-const ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="96" fill="#0f766e"/>
-  <path d="M136 168c60-28 180-28 240 0 18 8 18 168 0 176-60 28-180 28-240 0-18-8-18-168 0-176z" fill="none" stroke="#fff" stroke-width="28" stroke-linejoin="round"/>
-  <circle cx="256" cy="256" r="44" fill="#fff"/>
-</svg>`;
-
-export const ICON_SVG = ICON;
-
 export const MANIFEST = {
   name: 'ReelEel',
   short_name: 'ReelEel',
@@ -38,7 +29,6 @@ export const MANIFEST = {
   icons: [
     { src: '/brand/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
     { src: '/brand/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-    { src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
   ],
 } as const;
 
@@ -57,7 +47,7 @@ export const SERVICE_WORKER = `// ReelEel service worker.
 const CACHE = 'reeleel-shell-v2';
 // Assets that are safe to serve from cache first — they change with the icon,
 // not with the code.
-const STATIC = ['/icon.svg', '/manifest.webmanifest'];
+const STATIC = ['/brand/favicon-32.png', '/manifest.webmanifest'];
 const FRESH = ['/client.js'];
 
 self.addEventListener('install', (event) => {
