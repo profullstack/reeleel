@@ -12,6 +12,7 @@ import type {
   SuggestedMoment,
 } from '@reeleel/core';
 
+import { FILE_INPUT_ACCEPT } from '../accept.js';
 import { Layout } from './Layout.js';
 
 const duration = (seconds: number): string => {
@@ -211,7 +212,7 @@ export const ProjectPage: FC<ProjectView> = ({
                 id="file"
                 name="file"
                 type="file"
-                accept="video/mp4,video/quicktime,video/x-matroska,video/webm"
+                accept={FILE_INPUT_ACCEPT}
               />
             </div>
             <button type="submit">Import</button>

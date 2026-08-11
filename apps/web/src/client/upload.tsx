@@ -1,6 +1,7 @@
 /** @jsxImportSource hono/jsx/dom */
 import { render, useEffect, useRef, useState } from 'hono/jsx/dom';
 
+import { FILE_INPUT_ACCEPT } from '../accept.js';
 import {
   CHUNK_RETRY_BUDGET_MS,
   IMPORT_RETRY_BUDGET_MS,
@@ -606,7 +607,7 @@ const Uploader = ({ base }: { base: string }) => {
           ref={input}
           type="file"
           multiple
-          accept="video/mp4,video/quicktime,video/x-matroska,video/webm"
+          accept={FILE_INPUT_ACCEPT}
           style="display:none"
           onChange={(event: Event) => {
             const target = event.target as HTMLInputElement;
@@ -620,7 +621,7 @@ const Uploader = ({ base }: { base: string }) => {
       <input
         ref={resumeInput}
         type="file"
-        accept="video/mp4,video/quicktime,video/x-matroska,video/webm"
+        accept={FILE_INPUT_ACCEPT}
         style="display:none"
         onChange={(event: Event) => {
           const target = event.target as HTMLInputElement;

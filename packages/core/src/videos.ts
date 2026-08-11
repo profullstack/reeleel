@@ -10,8 +10,68 @@ import { projectDir } from './layout.js';
 import { readManifest } from './projects.js';
 import type { ProbeResult, SourceVideo } from './types.js';
 
-/** Containers the PRD commits to for MVP import. */
-export const SUPPORTED_EXTENSIONS = ['.mp4', '.mov', '.mkv', '.webm', '.m4v'] as const;
+/**
+ * Containers we accept for import, grouped by where the footage comes from.
+ *
+ * This list is deliberately wide. It is a cheap pre-check on the file *name*,
+ * used before a single byte is uploaded so a 4 GB import fails in a dialog
+ * rather than twenty minutes later. It is not the authority on whether the
+ * footage is usable — `probe()` is, and it runs on the real bytes once they
+ * land. Anything ffmpeg cannot demux still gets rejected there, with a message
+ * about the actual file rather than its extension.
+ *
+ * The cost of being narrow here is a parent who cannot import the clip their
+ * camcorder produced. The cost of being wide is a slightly later error on a
+ * file that was never going to work. Wide wins.
+ */
+export const SUPPORTED_EXTENSIONS = [
+  // Phones, action cams, drones, mirrorless — the overwhelming majority.
+  '.mp4',
+  '.m4v',
+  '.mov',
+  '.qt',
+  // Older handsets, and some budget phones still shooting 3GPP.
+  '.3gp',
+  '.3g2',
+  // AVCHD camcorders: Sony, Panasonic, Canon. Sidecar-free stream copies too.
+  '.mts',
+  '.m2ts',
+  '.m2t',
+  '.ts',
+  // Screen recorders, browsers, OBS, Android OEM recorders.
+  '.mkv',
+  '.webm',
+  '.ogv',
+  // Dashcams, trail cams, older point-and-shoots.
+  '.avi',
+  '.divx',
+  // DVD-era camcorders and capture cards.
+  '.mpg',
+  '.mpeg',
+  '.mpe',
+  '.m1v',
+  '.m2v',
+  '.vob',
+  // Windows-era camcorders and old handhelds.
+  '.wmv',
+  '.asf',
+  // Broadcast and pro bodies: Canon XF, Sony XDCAM, Panasonic P2.
+  '.mxf',
+  // MiniDV capture.
+  '.dv',
+  '.dif',
+  // Legacy web recordings people still have lying around.
+  '.flv',
+  '.f4v',
+  // 360 cameras — Insta360 writes mp4-based .insv files.
+  '.insv',
+  // Raw elementary streams from some recorders and encoder boxes.
+  '.h264',
+  '.264',
+  '.h265',
+  '.265',
+  '.hevc',
+] as const;
 
 export const isSupportedExtension = (file: string): boolean =>
   (SUPPORTED_EXTENSIONS as readonly string[]).includes(path.extname(file).toLowerCase());
