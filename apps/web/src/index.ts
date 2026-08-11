@@ -1,7 +1,13 @@
 import { serve } from '@hono/node-server';
 
 import { AuthConfigError, assertAuthConfigured, isAuthEnabled } from '@reeleel/api';
-import { failInterruptedJobs, listProjects } from '@reeleel/core';
+import {
+  analyzeProject,
+  failInterruptedJobs,
+  interruptedDetections,
+  listProjects,
+} from '@reeleel/core';
+import type { Preset } from '@reeleel/core';
 
 import { clientBundleExists, createWebApp } from './server.js';
 
@@ -57,13 +63,52 @@ void (async () => {
   try {
     const projects = await listProjects();
     let failed = 0;
+    const resume: { root: string; preset: Preset; videoId?: string }[] = [];
     for (const project of projects) {
       // A registered directory that is no longer on disk has no database to open.
       if (!project.exists) continue;
+      /**
+       * Read what was killed before marking it dead — the sweep below is what
+       * takes these rows out of `running`.
+       */
+      for (const job of await interruptedDetections(project.root)) {
+        const videoIds = Array.isArray(job.params['videoIds']) ? job.params['videoIds'] : [];
+        resume.push({
+          root: project.root,
+          preset: (job.params['preset'] as Preset | undefined) ?? 'balanced',
+          // analyzeProject takes one video or all of them; a run that named
+          // exactly one is resumed as that one, anything else as the project.
+          ...(videoIds.length === 1 && typeof videoIds[0] === 'string'
+            ? { videoId: videoIds[0] }
+            : {}),
+        });
+      }
       failed += await failInterruptedJobs(project.root);
     }
     if (failed > 0) {
       process.stderr.write(`marked ${failed} interrupted job(s) as failed after restart\n`);
+    }
+
+    /**
+     * Then start the detection again, because nobody else will.
+     *
+     * Telling the user "start it again" only works if they are watching, and
+     * the run this matters for is the hour-long one they left alone. Production
+     * lost a 61-minute video to a deploy three minutes in: the job failed
+     * honestly, said so in the log, and the footage then sat unanalysed while
+     * every screen kept showing results from a different, five-minute file.
+     *
+     * Deliberately after the sweep, and one attempt per process start, with
+     * {@link interruptedDetections} refusing to feed a crash loop.
+     */
+    for (const job of resume) {
+      process.stderr.write(`resuming interrupted detection in ${job.root}\n`);
+      void analyzeProject(job.root, {
+        preset: job.preset,
+        ...(job.videoId === undefined ? {} : { videoId: job.videoId }),
+      }).catch((error: unknown) => {
+        process.stderr.write(`resumed analysis failed: ${String(error)}\n`);
+      });
     }
   } catch (error) {
     // Never block startup on housekeeping.

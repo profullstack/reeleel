@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   COLOUR_FLOOR,
+  MAX_LINK_SECONDS,
   linkBetween,
   mergeSignatures,
   overlapsInTime,
@@ -164,7 +165,30 @@ describe('linking one fragment to the next', () => {
   });
 
   it('refuses a silence longer than a child can be vouched for', () => {
-    expect(linkBetween(at('known', 10, 20, 500), at('later', 25, 30, 505), FRAME)).toBeNull();
+    // Anchored to the constant, not to a number that happened to exceed it: the
+    // limit moved from 2s to 6s and this test went on passing for a gap that
+    // was by then well inside it.
+    const beyond = 20 + MAX_LINK_SECONDS + 1;
+    expect(linkBetween(at('known', 10, 20, 500), at('later', beyond, beyond + 5, 505), FRAME))
+      .toBeNull();
+    const within = 20 + MAX_LINK_SECONDS - 0.5;
+    expect(linkBetween(at('known', 10, 20, 500), at('later', within, within + 5, 505), FRAME))
+      .not.toBeNull();
+  });
+
+  /**
+   * The reach formula grows without bound, so before it was capped a longer gap
+   * did not loosen the distance gate, it removed it: past 3.1s the allowance
+   * exceeds a whole frame width, and links measured on production footage
+   * reached 1,676px of 1920. Colour cannot catch that — teammates share a shirt
+   * — so this is the only thing keeping the child beside yours out of the reel.
+   */
+  it('never draws a link clear across the court, however long the gap', () => {
+    for (const gap of [0.5, 2, 4, MAX_LINK_SECONDS]) {
+      const start = 20 + gap;
+      const link = linkBetween(at('known', 10, 20, 200), at('far', start, start + 2, 1800), FRAME);
+      expect(link, `a ${gap}s gap should not reach 1600px`).toBeNull();
+    }
   });
 
   it('refuses a jump no child could have run', () => {

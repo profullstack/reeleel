@@ -270,6 +270,55 @@ export const removeJob = async (root: string, jobId: string): Promise<Job> => {
  *
  * Called on startup, when by definition this process owns no running work.
  */
+/**
+ * The detection runs a restart killed, in the form needed to start them again.
+ *
+ * Must be called *before* {@link failInterruptedJobs}, which is what flips these
+ * rows out of `running`.
+ *
+ * Detection is the only kind worth resuming automatically. A render is seconds
+ * and the user is watching; detection on a full game is the better part of an
+ * hour, and losing it to a deploy means the footage is silently never analysed
+ * — which reads, from the outside, as the product simply not working. That is
+ * not hypothetical: a 61-minute upload was interrupted at 10%, the next run
+ * targeted a different video, and the project sat for hours showing results
+ * from five minutes of unrelated footage.
+ */
+export const RESTART_ERROR = 'Interrupted by a server restart.';
+
+export const interruptedDetections = async (
+  root: string,
+): Promise<{ id: string; params: Record<string, unknown> }[]> => {
+  const db = await projectDb(root);
+  const rows = await all<{ id: string; params_json: string }>(
+    db,
+    "SELECT id, params_json FROM jobs WHERE kind = 'detection' AND status IN ('running', 'queued')",
+  );
+  if (rows.length === 0) return [];
+
+  /**
+   * Unless restarting is what keeps killing it.
+   *
+   * A deploy interrupts one run. A run that kills the container — an OOM on a
+   * file too big for the box — interrupts itself, for ever: resume, die,
+   * resume. Two interrupted runs already behind this one is the signature of
+   * that, and the difference matters because the crash loop is the failure mode
+   * that takes the whole service down rather than one job.
+   */
+  const recent = await all<{ error: string | null }>(
+    db,
+    `SELECT error FROM jobs
+      WHERE kind = 'detection' AND finished_at IS NOT NULL
+      ORDER BY finished_at DESC LIMIT 2`,
+  );
+  if (recent.length === 2 && recent.every((job) => job.error === RESTART_ERROR)) return [];
+
+  return rows.map((row) => ({
+    id: row.id,
+    params: parseJson<Record<string, unknown>>(row.params_json, {}),
+  }));
+};
+
 export const failInterruptedJobs = async (root: string): Promise<number> => {
   const db = await projectDb(root);
   const orphans = await all<{ id: string }>(
@@ -291,7 +340,7 @@ export const failInterruptedJobs = async (root: string): Promise<number> => {
     db,
     `UPDATE jobs SET status = 'failed', error = ?, finished_at = ?
       WHERE status IN ('running', 'queued')`,
-    ['Interrupted by a server restart.', nowIso()],
+    [RESTART_ERROR, nowIso()],
   );
   return orphans.length;
 };

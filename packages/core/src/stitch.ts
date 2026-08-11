@@ -44,8 +44,21 @@ export interface AthleteProposal {
  */
 export const COLOUR_FLOOR = 0.7;
 
-/** Longest silence a link may be drawn across. */
-export const MAX_LINK_SECONDS = 2;
+/**
+ * Longest silence a link may be drawn across.
+ *
+ * Two seconds was measured against a detection run that produced 1,415 tracks.
+ * A later run of the same 300s game produced 1,648, and at that fragmentation
+ * two seconds stopped reaching: of 885 candidates, **4** could link to the
+ * athlete at all, and none of those four also cleared {@link COLOUR_FLOOR}, so
+ * the matcher considered 885 tracks and proposed nothing. The athlete stayed on
+ * the 10.3s the user had pointed at by hand, and 10.3s of focal track in a
+ * 300-second game yields exactly one suggested moment.
+ *
+ * Six seconds, with the reach cap below, restores it: 45.4s of coverage and 5
+ * moments, at a *stricter* worst-case travel than two seconds allowed.
+ */
+export const MAX_LINK_SECONDS = 6;
 
 /**
  * How far a child may travel between two fragments, as a fraction of frame
@@ -53,10 +66,26 @@ export const MAX_LINK_SECONDS = 2;
  *
  * At four seconds and this speed the accepted links reached 894 pixels of a
  * 1920-wide frame — most of the way across a court — for eight more seconds of
- * coverage. The gap limit above is where that trade stops being worth taking.
+ * coverage.
  */
 export const LINK_SPEED_FRACTION = 0.31;
 export const LINK_SLACK_FRACTION = 0.03;
+
+/**
+ * Ceiling on that reach, as a fraction of frame width.
+ *
+ * The formula above grows without bound, and at this speed it passes a whole
+ * frame width by 3.1 seconds — so raising the gap limit alone does not loosen
+ * the distance gate, it *removes* it. Measured: at a 4s gap and no cap, accepted
+ * links reached 1,676px of a 1920px frame, which is the far side of the court.
+ *
+ * That matters more than it looks. Colour identifies a team, not a child (see
+ * {@link COLOUR_FLOOR}), so continuity is the only thing standing between an
+ * athlete and the teammate beside them — and a link drawn clear across the
+ * court is not continuity, it is a coin toss. Capped at a quarter of the frame,
+ * the longest accepted link on production footage is 419px.
+ */
+export const LINK_REACH_CAP = 0.25;
 
 /** Time span a track occupies. */
 export const spanOf = (series: TrackSeries): { start: number; end: number } => {
@@ -174,7 +203,7 @@ export const linkBetween = (
   }
 
   const reach = (gap: number): number =>
-    frameWidth * LINK_SPEED_FRACTION * gap + frameWidth * LINK_SLACK_FRACTION;
+    frameWidth * Math.min(LINK_SPEED_FRACTION * gap + LINK_SLACK_FRACTION, LINK_REACH_CAP);
 
   const forward = otherFirst.ts - knownLast.ts;
   if (forward > 0 && forward <= maxSeconds) {

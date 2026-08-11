@@ -100,6 +100,30 @@ export const listClips = async (root: string): Promise<Clip[]> => {
   return rows.map(toClip);
 };
 
+/**
+ * The same seconds of footage, appearing once.
+ *
+ * Nobody wants a highlight reel that plays the same five seconds three times,
+ * and a project can hold duplicates for reasons that are nothing to do with the
+ * reel: generated clips piled up on every scoring run until that was fixed, and
+ * the copies it had already made were marked manual, so they were left behind
+ * on purpose rather than deleted. Production still carries 17 clip rows for 7
+ * distinct spans — five of them in triplicate.
+ *
+ * Deduplicated on what a viewer would actually see twice, which is the footage,
+ * not the row: same video, same in and out point. The earliest survives, so
+ * whatever a caller ordered by is preserved.
+ */
+export const distinctSpans = (clips: Clip[]): Clip[] => {
+  const seen = new Set<string>();
+  return clips.filter((clip) => {
+    const key = `${clip.videoId ?? ''}@${clip.start}-${clip.end}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
 export const getClip = async (root: string, reference: string): Promise<Clip> => {
   const clips = await listClips(root);
   const byId = clips.find((clip) => clip.id === reference);

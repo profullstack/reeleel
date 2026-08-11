@@ -327,30 +327,48 @@ export const analyzeProject = async (
   let tracksCreated = 0;
   let momentsGenerated = 0;
 
+  /**
+   * Editing media, built when detection is not waiting on it.
+   *
+   * The proxy is a 540p transcode of the whole source. Detection only reads it
+   * on `fast`, because every other preset infers at more pixels than the proxy
+   * has (see {@link detectionInputFor}) — so for the presets people actually
+   * run, this is minutes of ffmpeg standing between the user and the tracks,
+   * producing a file that pass will not open.
+   *
+   * That is not merely wasteful, it is where a real run died: a 61-minute
+   * upload spent its first three minutes transcoding, a deploy replaced the
+   * container, and the job was lost at 10% having detected nothing. Ordering
+   * detection first would have banked 1,648 tracks before the restart.
+   */
+  const buildMedia = async (from: number, span: number): Promise<void> => {
+    if (options.skipMedia === true) return;
+    for (const [index, video] of videos.entries()) {
+      const share = (index + 1) / videos.length;
+      await stage('proxy', from + span * 0.5 * share, path.basename(video.path));
+      if (video.proxyPath === null || !existsSync(video.proxyPath)) {
+        await generateProxy(root, video, options.signal === undefined ? {} : { signal: options.signal });
+      }
+      await stage('thumbnails', from + span * share, path.basename(video.path));
+      if (video.thumbnailDir === null || !existsSync(video.thumbnailDir)) {
+        await generateThumbnails(
+          root,
+          video,
+          options.signal === undefined ? {} : { signal: options.signal },
+        );
+      }
+    }
+    stagesRun.push('proxy', 'thumbnails');
+  };
+
   try {
     if (options.scoreOnly !== true) {
-      if (options.skipMedia !== true) {
-        for (const [index, video] of videos.entries()) {
-          const share = (index + 1) / videos.length;
-          await stage('proxy', 0.1 * share, path.basename(video.path));
-          if (video.proxyPath === null || !existsSync(video.proxyPath)) {
-            await generateProxy(
-              root,
-              video,
-              options.signal === undefined ? {} : { signal: options.signal },
-            );
-          }
-          await stage('thumbnails', 0.2 * share, path.basename(video.path));
-          if (video.thumbnailDir === null || !existsSync(video.thumbnailDir)) {
-            await generateThumbnails(
-              root,
-              video,
-              options.signal === undefined ? {} : { signal: options.signal },
-            );
-          }
-        }
-        stagesRun.push('proxy', 'thumbnails');
-      }
+      /**
+       * Only ahead of detection when detection is the thing that needs it.
+       * Otherwise it runs after the tracks are safely written.
+       */
+      const detectionNeedsProxy = settings.useProxy && settings.inferenceSize <= PROXY_HEIGHT;
+      if (detectionNeedsProxy) await buildMedia(0, 0.2);
 
       const worker = resolveCvWorker();
       if (worker === null) {
@@ -568,6 +586,10 @@ export const analyzeProject = async (
           tracksCreated += 1;
         }
       }
+
+      // The tracks are written; the editing transcode can have the machine now.
+      if (!detectionNeedsProxy) await buildMedia(0.7, 0.1);
+
       /**
        * Find the athlete again in the new tracks. Positions survive a
        * re-detection even though ids do not, so the person standing where the
@@ -588,6 +610,49 @@ export const analyzeProject = async (
           warnings.push(
             `${lost} athlete(s) could not be matched to the new tracks. Open "Identify your athlete" and pick them again.`,
           );
+        }
+
+        /**
+         * Then widen that back out by appearance, because re-binding alone
+         * cannot.
+         *
+         * `rebindAthletes` matches on overlap in space and time, so it can only
+         * ever hand back the ground the athlete already held — it is incapable
+         * of recovering the rest of the game. Identifying an athlete does widen
+         * the binding by appearance, but only at the moment of the click, and
+         * every subsequent detection run wiped that work: production shows the
+         * pattern exactly, an athlete expanded once and then reduced to "9
+         * athlete(s) across 18 new track(s)" — two fragments each — by the next
+         * run, taking the moments down with it.
+         *
+         * Best-effort, and last: no worker, no proxy or no match must cost the
+         * re-binding above, which is the part scoring genuinely cannot do
+         * without.
+         */
+        await stage('re-identifying', 0.82);
+        // Imported here rather than at the top because appearance.js imports
+        // resolveCvWorker from this module, and a static cycle between the two
+        // is a worse thing to own than one dynamic import.
+        const { proposeAthleteTracks } = await import('./appearance.js');
+        const { assignTracksToAthlete } = await import('./tracks.js');
+        let widened = 0;
+        for (const entry of restored) {
+          try {
+            const found = await proposeAthleteTracks(root, entry.athleteId, {
+              ...(options.signal === undefined ? {} : { signal: options.signal }),
+            });
+            const added = found.proposals.map((proposal) => proposal.trackId);
+            if (added.length === 0) continue;
+            await assignTracksToAthlete(root, entry.athleteId, [
+              ...new Set([...entry.trackIds, ...added]),
+            ]);
+            widened += added.length;
+          } catch {
+            // Survivable, per above. The re-bind stands.
+          }
+        }
+        if (widened > 0) {
+          await logJob(root, job.id, `followed them through ${widened} more track(s) by appearance`);
         }
       }
 
