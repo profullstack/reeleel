@@ -24,7 +24,14 @@ import path from 'node:path';
 
 import { SUPPORTED_EXTENSIONS, isSupportedExtension, projectDir } from '@reeleel/core';
 
-import { UploadError, assertRoomFor, safeFileName, uploadStallMs, withStallTimeout } from './receive.js';
+import {
+  UploadError,
+  assertRoomFor,
+  maxUploadBytes,
+  safeFileName,
+  uploadStallMs,
+  withStallTimeout,
+} from './receive.js';
 import {
   beginUpload,
   cancelUpload,
@@ -37,6 +44,8 @@ import type { UploadRecord } from './uploads.js';
 
 /** Scratch files are keyed by upload id, not by name, so a rename is free. */
 const PREFIX = '.reeleel-upload-';
+
+const GIB = 1024 * 1024 * 1024;
 
 const partPathFor = (root: string, id: string): string =>
   path.join(projectDir(root, 'source'), `${PREFIX}${id}.part`);
@@ -130,6 +139,17 @@ export const createSession = async (input: CreateSessionInput): Promise<UploadRe
   }
   if (!Number.isFinite(input.size) || input.size <= 0) {
     throw new UploadError('INVALID_INPUT', 'The upload needs a positive size.', { status: 400 });
+  }
+  // The one-shot form post has always had a ceiling; the chunked path never
+  // checked one, so an over-sized file was only ever refused by running out of
+  // disk part-way through. Saying so before the first byte costs nothing.
+  const ceiling = maxUploadBytes();
+  if (input.size > ceiling) {
+    throw new UploadError(
+      'UPLOAD_TOO_LARGE',
+      `That file is ${Math.round(input.size / GIB)} GB and the limit is ${Math.floor(ceiling / GIB)} GB.`,
+      { hint: 'Trim the footage, or raise REELEEL_MAX_UPLOAD_BYTES.', status: 413 },
+    );
   }
 
   const dir = projectDir(input.root, 'source');
@@ -256,7 +276,15 @@ export const appendChunk = async (input: AppendInput): Promise<UploadRecord> => 
     throw new UploadError('CONFLICT', 'This upload was canceled.', { status: 409 });
   }
   if (record.writing) {
-    throw new UploadError('CONFLICT', 'Another chunk is already being written.', { status: 409 });
+    // Its own code, because this is the one conflict a client should wait out
+    // rather than give up on. When the edge hangs up on a chunk the server does
+    // not find out until its read stalls, so the retry arrives while the
+    // abandoned write is still draining — and letting them both write would
+    // interleave two streams into one part file.
+    throw new UploadError('UPLOAD_BUSY', 'Another chunk is already being written.', {
+      hint: 'Wait for the chunk in flight to finish, then resume from the upload offset.',
+      status: 409,
+    });
   }
 
   const stored = onDiskBytes(record.partPath);

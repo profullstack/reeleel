@@ -15,7 +15,7 @@ import {
   promoteSession,
   renameSession,
 } from './chunked.js';
-import { UploadError } from './receive.js';
+import { UploadError, maxUploadBytes } from './receive.js';
 import { resetUploads } from './uploads.js';
 import type { UploadRecord } from './uploads.js';
 
@@ -30,6 +30,7 @@ beforeEach(async () => {
 afterEach(async () => {
   vi.restoreAllMocks();
   delete process.env['REELEEL_MAX_CHUNK_BYTES'];
+  delete process.env['REELEEL_MAX_UPLOAD_BYTES'];
   await rm(root, { recursive: true, force: true });
 });
 
@@ -102,6 +103,33 @@ describe('createSession', () => {
     await promoteSession(root, record);
 
     await expect(start('game.mp4', 4)).rejects.toMatchObject({ code: 'CONFLICT', status: 409 });
+  });
+
+  // Sizes here are set through the limit rather than written out in gigabytes,
+  // so the boundary is asserted without the test needing 10 GB of free disk.
+  it('accepts a file right up to the limit', async () => {
+    process.env['REELEEL_MAX_UPLOAD_BYTES'] = String(4096);
+
+    const record = await start('game.mp4', 4096);
+    expect(record.bytesExpected).toBe(4096);
+  });
+
+  it('refuses a file over the limit up front, rather than part-way through', async () => {
+    process.env['REELEEL_MAX_UPLOAD_BYTES'] = String(4096);
+
+    await expect(start('huge.mp4', 4097)).rejects.toMatchObject({
+      code: 'UPLOAD_TOO_LARGE',
+      status: 413,
+    });
+    // Nothing was reserved for an upload that can never succeed.
+    expect(sourceFiles()).toEqual([]);
+  });
+
+  it('leaves room for a 10 GB game file by default', () => {
+    // Asserted through the ceiling rather than by opening one, so the test does
+    // not need 10 GB of free disk to say what it means.
+    delete process.env['REELEEL_MAX_UPLOAD_BYTES'];
+    expect(maxUploadBytes()).toBeGreaterThanOrEqual(10 * 1024 * 1024 * 1024);
   });
 
   it('sanitises the destination name', async () => {
