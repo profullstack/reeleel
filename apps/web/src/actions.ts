@@ -698,6 +698,7 @@ export const registerActions = (app: Hono): void => {
             jerseyNumber?: string;
             team?: string;
             jerseyColor?: string;
+            expand?: boolean;
           })
         : { trackId: field(await c.req.parseBody(), 'trackId') };
 
@@ -790,9 +791,44 @@ export const registerActions = (app: Hono): void => {
         : requestedIds;
       const assigned = await assignTracksToAthlete(root, athleteId, finalIds);
 
+      /**
+       * Follow them through the rest of the game, if the caller cannot.
+       *
+       * Stitching one pick into the fragments either side of it has existed
+       * since the appearance matcher landed, but the only way to reach it was
+       * the candidate grid, which offers proposals to tick. The scrubber — the
+       * surface people actually use, because pointing at your child on the
+       * footage needs no explanation — bound the single track under the cursor
+       * and stopped. Production shows exactly that: an athlete on 2 tracks out
+       * of 1125, and one suggested moment, in a game they play the whole of.
+       *
+       * The proposals are the same ones the grid pre-ticks for confirmation, so
+       * accepting them here is the behaviour that surface already had. It is
+       * best-effort: a failure to expand must never lose the pick itself, which
+       * is the part the user made and the part scoring cannot do without.
+       */
+      let added: string[] = [];
+      if (body.expand === true) {
+        try {
+          const found = await proposeAthleteTracks(root, athleteId, {});
+          added = found.proposals.map((proposal) => proposal.trackId);
+          if (added.length > 0) {
+            // The whole set, not the additions: assigning is a replace, and it
+            // clears the athlete's existing rows before it writes.
+            await assignTracksToAthlete(root, athleteId, [...new Set([...finalIds, ...added])]);
+          }
+        } catch {
+          // No worker, no proxy, nothing to link to — all survivable. The pick
+          // stands, and the grid can still be used to widen it by hand.
+          added = [];
+        }
+      }
+
       startAnalysis(root, { preset: 'balanced', scoreOnly: true });
 
-      if (prefersJson(c)) return c.json({ ok: true, athleteId, trackId, assigned });
+      if (prefersJson(c)) {
+        return c.json({ ok: true, athleteId, trackId, assigned, added: added.length });
+      }
       return back(c, to, 'Athlete identified — re-scoring with them as the focus');
     } catch (error) {
       if (prefersJson(c)) return uploadJson(c, error);

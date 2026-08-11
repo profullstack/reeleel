@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseClassConfidence } from './index.js';
+import { parseClassBuffer, parseClassConfidence } from './index.js';
 
 /**
  * A basketball is a handful of pixels and the model is right to be unsure about
@@ -56,5 +56,29 @@ describe('per-class detection floors', () => {
     expect(parseClassConfidence('ball=1.5')).toEqual({});
     expect(parseClassConfidence('ball=0')).toEqual({});
     expect(parseClassConfidence('ball=-0.2')).toEqual({});
+  });
+});
+
+/**
+ * Buffers are a distance, not a probability, so they share the parser but not
+ * its ceiling — the useful values for a basketball are greater than 1, which is
+ * the whole reason the plain overlap test fails on it.
+ */
+describe('per-class association buffers', () => {
+  it('accepts the values a ball actually needs', () => {
+    expect(parseClassBuffer('ball=1.5')).toEqual({ ball: 1.5 });
+    expect(parseClassBuffer('ball=2.5,puck=1.5')).toEqual({ ball: 2.5, puck: 1.5 });
+  });
+
+  it('still refuses nonsense', () => {
+    expect(parseClassBuffer('ball=0')).toEqual({});
+    expect(parseClassBuffer('ball=-1')).toEqual({});
+    expect(parseClassBuffer('ball=abc')).toEqual({});
+    // Far enough that every ball on court would match every other one.
+    expect(parseClassBuffer('ball=99')).toEqual({});
+  });
+
+  it('is absent rather than empty when nothing is asked for', () => {
+    expect(parseClassBuffer(undefined)).toEqual({});
   });
 });
