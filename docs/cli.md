@@ -87,7 +87,18 @@ ReelEel will not delete a file it did not put there.
 Moved a file? `reeleel import update <id> --path <new location>` re-points it and
 re-probes.
 
-Supported containers: `.mp4`, `.mov`, `.mkv`, `.webm`, `.m4v`.
+Supported containers: anything a phone, action cam, drone, mirrorless body,
+camcorder or screen recorder writes — `.mp4`, `.m4v`, `.mov`, `.qt`, `.3gp`,
+`.3g2`, `.mts`, `.m2ts`, `.m2t`, `.ts`, `.mkv`, `.webm`, `.ogv`, `.avi`,
+`.divx`, `.mpg`, `.mpeg`, `.mpe`, `.m1v`, `.m2v`, `.vob`, `.wmv`, `.asf`,
+`.mxf`, `.dv`, `.dif`, `.flv`, `.f4v`, `.insv`, `.h264`, `.264`, `.h265`,
+`.265`, `.hevc`.
+
+The extension is only a cheap pre-check, so an import fails before a large file
+moves rather than after. FFmpeg has the final say: a file that probes with no
+readable video or audio stream is rejected whatever it is called. Camera raw
+formats (`.braw`, `.r3d`, `.ari`) need vendor SDKs FFmpeg does not ship —
+transcode those to `.mov` or `.mp4` first.
 
 `<ref>` accepts an id, a 1-based index, or a filename fragment.
 
