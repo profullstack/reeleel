@@ -45,6 +45,75 @@ export interface AthleteProposal {
 export const COLOUR_FLOOR = 0.7;
 
 /**
+ * Which bins of the worker's histogram a named shirt colour occupies.
+ *
+ * The layout is the worker's own: twelve hues by two saturations (0..23, thirty
+ * degrees each), then four lightness bins for everything too washed out or too
+ * dark to carry a hue (24 darkest .. 27 brightest). White and black are
+ * therefore not hues at all but opposite ends of the grey ramp, which is exactly
+ * why they separate so well — measured on representative torso crops, a white
+ * shirt against a black one intersects at 0.28, against a floor of 0.70.
+ *
+ * `jersey_color` has been on the athlete row since the first migration, and
+ * until now nothing but a label has ever read it. The matcher could be told a
+ * name and a number, and a number is the one attribute a detector cannot match
+ * on — so "#14 in white" and "#14 in black" were the same question, and the
+ * answer was whichever child the continuity gate reached first.
+ */
+export const JERSEY_BINS: Record<string, number[]> = {
+  white: [27, 26],
+  black: [24, 25],
+  grey: [25, 26],
+  gray: [25, 26],
+  silver: [25, 26],
+  red: [0, 1, 22, 23],
+  maroon: [0, 1, 22, 23],
+  orange: [2, 3],
+  yellow: [4, 5],
+  gold: [4, 5],
+  green: [6, 7, 8, 9],
+  teal: [10, 11, 12, 13],
+  cyan: [10, 11, 12, 13],
+  blue: [14, 15, 16, 17],
+  navy: [14, 15, 16, 17],
+  royal: [14, 15, 16, 17],
+  purple: [18, 19],
+  violet: [18, 19],
+  pink: [20, 21],
+  magenta: [20, 21],
+};
+
+/**
+ * How much of a torso must be the declared colour before a track can be this
+ * athlete at all.
+ *
+ * Deliberately low. A crop catches shorts, skin, floor and whoever is standing
+ * behind, so even a correct shirt rarely holds much more than two thirds of the
+ * histogram — while the *wrong team* contributes almost none of it. The bar only
+ * has to sit inside that gap, and sitting near the bottom of it keeps a shirt in
+ * shadow from disowning its own child.
+ */
+export const JERSEY_FLOOR = 0.2;
+
+/**
+ * How much of this signature is the named colour, or null when there is nothing
+ * to judge by — no colour recorded, or a word we have no bins for.
+ *
+ * Null rather than zero matters: an unrecognised colour has to leave matching
+ * exactly as permissive as it was, never silently reject every candidate in the
+ * game because somebody typed "sky blue".
+ */
+export const jerseyMass = (
+  signature: number[],
+  colour: string | null | undefined,
+): number | null => {
+  if (colour === null || colour === undefined) return null;
+  const bins = JERSEY_BINS[colour.trim().toLowerCase()];
+  if (bins === undefined) return null;
+  return bins.reduce((sum, bin) => sum + (signature[bin] ?? 0), 0);
+};
+
+/**
  * Longest silence a link may be drawn across.
  *
  * Two seconds was measured against a detection run that produced 1,415 tracks.
@@ -242,6 +311,13 @@ export interface ChooseOptions {
   frameWidth: number;
   threshold?: number;
   limit?: number;
+  /**
+   * The shirt the athlete was said to be wearing. Absent or unrecognised leaves
+   * matching exactly as it was.
+   */
+  jerseyColor?: string | null;
+  /** Minimum share of the torso that must be that colour. Default {@link JERSEY_FLOOR}. */
+  jerseyFloor?: number;
 }
 
 /**
@@ -257,6 +333,7 @@ export interface ChooseOptions {
 export const chooseAthleteTracks = (options: ChooseOptions): AthleteProposal[] => {
   const { reference, signatures, pixels, frameWidth } = options;
   const threshold = options.threshold ?? COLOUR_FLOOR;
+  const jerseyFloor = options.jerseyFloor ?? JERSEY_FLOOR;
   const limit = options.limit ?? 40;
 
   const chosen = [...reference];
@@ -290,6 +367,20 @@ export const chooseAthleteTracks = (options: ChooseOptions): AthleteProposal[] =
 
       const signature = signatures[track.id];
       if (signature === undefined || signature.length === 0) continue;
+
+      /**
+       * The declared shirt, checked against the shirt itself rather than against
+       * the running average.
+       *
+       * `current` is re-derived after every acceptance so it can follow the
+       * athlete's own lighting down the court — which also means it can be
+       * walked, one admissible step at a time, toward a shirt the athlete never
+       * wore. An absolute bar cannot be walked: the other team fails it at every
+       * step, however good the continuity that led there.
+       */
+      const declared = jerseyMass(signature, options.jerseyColor);
+      if (declared !== null && declared < jerseyFloor) continue;
+
       const colour = similarity(signature, current);
       if (colour < threshold) continue;
 
