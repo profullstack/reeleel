@@ -55,6 +55,7 @@ import {
   updateAthlete,
   updateMoment,
   updateProject,
+  updateReel,
 } from '@reeleel/core';
 import type { AspectRatio, Preset } from '@reeleel/core';
 
@@ -1551,12 +1552,36 @@ export const registerActions = (app: Hono): void => {
       const name = field(body, 'name') || 'highlights';
       const aspect = (field(body, 'aspect') || '16:9') as AspectRatio;
 
-      // Create the reel if it does not exist yet, then render in the
-      // background for the same reason analysis runs detached.
+      /**
+       * Bring the reel up to date with the moments, then render in the
+       * background for the same reason analysis runs detached.
+       *
+       * Both halves of this were missing, and together they made "export" a
+       * button that re-rendered the past.
+       *
+       * `createReel` defaults its clip list to every clip that exists at the
+       * moment it is called, and `reel_clips` is a fixed membership afterwards.
+       * On the second export the create throws CONFLICT, the catch swallows it,
+       * and the reel still holds the snapshot it took the first time. A
+       * production reel was pinned to four clips chosen on its first render and
+       * rendered those same four for the next five exports, across two days and
+       * several detection runs — no new moment could ever reach it.
+       *
+       * The clips themselves were equally stale: accepting a moment does not
+       * make a clip, so unless the user found the separate "create clips"
+       * action, the newly suggested moments were not even candidates.
+       * `clipsFromMoments` replaces generated clips and leaves manual ones
+       * alone, so this is safe to run on every export and keeps anything the
+       * user made by hand.
+       */
+      await clipsFromMoments(root);
+      const clipIds = (await listClips(root)).map((clip) => clip.id);
       try {
-        await createReel(root, { name, aspect });
+        await createReel(root, { name, aspect, clipIds });
       } catch {
-        // Already exists — reuse it.
+        // Already exists — refresh what it points at rather than reusing a
+        // membership list frozen at whatever the project held that first day.
+        await updateReel(root, name, { aspect, clipIds });
       }
       /**
        * Music is optional and remembered per project: it lives in the project
