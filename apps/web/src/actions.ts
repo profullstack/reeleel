@@ -18,6 +18,7 @@ import {
   clipsFromMoments,
   createProject,
   createReel,
+  distinctSpans,
   getAthlete,
   getFocalAthlete,
   getJob,
@@ -1575,7 +1576,10 @@ export const registerActions = (app: Hono): void => {
        * user made by hand.
        */
       await clipsFromMoments(root);
-      const clipIds = (await listClips(root)).map((clip) => clip.id);
+      // Deduplicated, because pointing the reel at "every clip" is only an
+      // improvement if the project's history cannot put the same five seconds
+      // in it three times over — and this project's can.
+      const clipIds = distinctSpans(await listClips(root)).map((clip) => clip.id);
       try {
         await createReel(root, { name, aspect, clipIds });
       } catch {

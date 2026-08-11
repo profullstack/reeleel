@@ -118,6 +118,28 @@ describe('exporting a reel', () => {
     expect(spans).toContainEqual({ start: 120, end: 125 });
   });
 
+  /**
+   * Pointing the reel at "every clip" is only an improvement if the project's
+   * history cannot put the same footage in it repeatedly — and this one's can.
+   * Generated clips piled up on every scoring run until that was fixed, and the
+   * copies already made were marked manual, so they survived on purpose.
+   * Production still holds 17 clip rows for 7 distinct spans, five in
+   * triplicate: rendering all of them would repeat five clips three times each.
+   */
+  it('plays the same seconds once, however many rows the project holds', async () => {
+    const { addClip } = await import('@reeleel/core');
+    for (let i = 0; i < 3; i += 1) {
+      await addClip(root, { start: 136, end: 141, videoId: null, manual: true });
+    }
+
+    await exportReel();
+
+    const spans = await reelSpans();
+    expect(spans.filter((s) => s.start === 136)).toHaveLength(1);
+    // And distinct footage is still distinct — this must not collapse the reel.
+    expect(spans.filter((s) => s.start === 300)).toHaveLength(1);
+  });
+
   it('drops a moment the user rejected on the next export', async () => {
     const { listMoments, updateMoment } = await import('@reeleel/core');
     const moment = (await listMoments(root)).find((m) => m.start === 120);
