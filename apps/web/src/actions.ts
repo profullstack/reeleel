@@ -1339,6 +1339,11 @@ export const registerActions = (app: Hono): void => {
       const root = await rootOf(c);
       record = await findSession(root, c.req.param('id') ?? '', ownerFor(c));
       if (record.status === 'done') return c.json({ ok: true, upload: view(record) });
+      // Already running. A large file's import can outlast the connection that
+      // asked for it, and the client's natural response is to ask again —
+      // which, unguarded, would promote a part file that is no longer there and
+      // report a missing upload for an import that is going fine.
+      if (record.status === 'importing') return c.json({ ok: true, upload: view(record) }, 202);
 
       reopenUpload(record);
       const stored = await promoteSession(root, record);

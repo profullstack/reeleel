@@ -1,6 +1,14 @@
 /** @jsxImportSource hono/jsx/dom */
 import { render, useEffect, useRef, useState } from 'hono/jsx/dom';
 
+import {
+  CHUNK_RETRY_BUDGET_MS,
+  IMPORT_RETRY_BUDGET_MS,
+  backoffMs,
+  isLostAnswer,
+  isRetryable,
+} from './retry.js';
+
 import { refreshLive } from './live.js';
 
 /**
@@ -20,10 +28,13 @@ import { refreshLive } from './live.js';
 
 const CHUNK = 8 * 1024 * 1024;
 
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => window.setTimeout(resolve, ms));
+
 type Phase =
   | 'queued'
   | 'creating'
   | 'uploading'
+  | 'retrying'
   | 'paused'
   | 'importing'
   | 'done'
@@ -93,20 +104,31 @@ class ApiError extends Error {
   readonly code: string;
   readonly hint: string | null;
   readonly upload: UploadDto | null;
+  /** Kept because the edge answers 502 itself, with none of our codes in it. */
+  readonly status: number;
 
   constructor(body: Envelope, status: number) {
     super(body.error ?? `Request failed (${status})`);
     this.code = body.code ?? `HTTP_${status}`;
     this.hint = body.hint ?? null;
     this.upload = body.upload ?? null;
+    this.status = status;
   }
 }
 
 const api = async (url: string, init: RequestInit = {}): Promise<Envelope> => {
-  const response = await fetch(url, {
-    ...init,
-    headers: { accept: 'application/json', ...(init.headers ?? {}) },
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...init,
+      headers: { accept: 'application/json', ...(init.headers ?? {}) },
+    });
+  } catch {
+    // A fetch that never produced a response rejects with a bare TypeError.
+    // Reported as a lost connection so callers can tell it apart from a server
+    // that answered and said no — one is worth retrying and the other is not.
+    throw new ApiError({ ok: false, code: 'NETWORK', error: 'The connection dropped.' }, 0);
+  }
   let body: Envelope;
   try {
     body = (await response.json()) as Envelope;
@@ -166,6 +188,8 @@ const statusLabel = (item: Item): string => {
       return 'Starting';
     case 'uploading':
       return 'Uploading';
+    case 'retrying':
+      return 'Retrying';
     case 'paused':
       return 'Paused';
     case 'importing':
@@ -259,48 +283,148 @@ const Uploader = ({ base }: { base: string }) => {
       let startedAt = Date.now();
       let startedFrom = live.offset;
 
+      // A chunk that fails is retried in place rather than ending the transfer.
+      // The budget is spent per stuck offset and refilled by any forward
+      // progress, so a long upload that loses a chunk every few minutes runs to
+      // completion while one that is genuinely stuck still gives up.
+      let attempt = 0;
+      let deadline = Date.now() + CHUNK_RETRY_BUDGET_MS;
+      let budgetedFor = -1;
+
       while (true) {
         const now = items.current.find((entry) => entry.key === key);
         if (now === undefined || now.phase === 'paused' || now.phase === 'canceled') return;
         if (now.offset >= now.file.size) break;
 
-        const end = Math.min(now.offset + CHUNK, now.file.size);
-        const slice = now.file.slice(now.offset, end);
+        if (now.offset !== budgetedFor) {
+          budgetedFor = now.offset;
+          attempt = 0;
+          deadline = Date.now() + CHUNK_RETRY_BUDGET_MS;
+        }
+
         const base_ = now.offset;
+        const end = Math.min(base_ + CHUNK, now.file.size);
+        const slice = now.file.slice(base_, end);
 
-        const body = await putChunk(
-          `${base}/uploads/${now.id}/data`,
-          base_,
-          slice,
-          (sentInChunk) => {
-            const elapsed = (Date.now() - startedAt) / 1000;
-            const moved = base_ + sentInChunk - startedFrom;
-            patch(key, {
-              offset: base_ + sentInChunk,
-              bytesPerSecond: elapsed > 0.5 ? moved / elapsed : 0,
-            });
-          },
-          (xhr) => patch(key, { xhr }),
-        );
+        try {
+          const body = await putChunk(
+            `${base}/uploads/${now.id}/data`,
+            base_,
+            slice,
+            (sentInChunk) => {
+              const elapsed = (Date.now() - startedAt) / 1000;
+              const moved = base_ + sentInChunk - startedFrom;
+              patch(key, {
+                offset: base_ + sentInChunk,
+                bytesPerSecond: elapsed > 0.5 ? moved / elapsed : 0,
+              });
+            },
+            (xhr) => patch(key, { xhr }),
+          );
 
-        // Trust the server's offset over the browser's idea of what it sent.
-        patch(key, { offset: body.upload?.offset ?? end, xhr: null });
+          // Trust the server's offset over the browser's idea of what it sent.
+          patch(key, {
+            offset: body.upload?.offset ?? end,
+            xhr: null,
+            phase: 'uploading',
+            code: null,
+            error: null,
+            hint: null,
+          });
 
-        // Re-baseline the rate occasionally so it tracks the current connection.
-        if (Date.now() - startedAt > 10_000) {
+          // Re-baseline the rate occasionally so it tracks the current connection.
+          if (Date.now() - startedAt > 10_000) {
+            startedAt = Date.now();
+            startedFrom = body.upload?.offset ?? end;
+          }
+        } catch (error) {
+          // Pause and Cancel abort the request too; neither is a failure.
+          const stopped = items.current.find((entry) => entry.key === key);
+          if (stopped === undefined || stopped.phase === 'paused' || stopped.phase === 'canceled') {
+            return;
+          }
+          const failure = error instanceof ApiError ? error : null;
+          if (failure === null || !isRetryable(failure.code, failure.status) || Date.now() > deadline) {
+            throw error;
+          }
+
+          attempt += 1;
+          patch(key, {
+            phase: 'retrying',
+            xhr: null,
+            bytesPerSecond: 0,
+            code: failure.code,
+            error: failure.message,
+            hint: failure.hint,
+          });
+          await sleep(backoffMs(attempt));
+
+          const held = items.current.find((entry) => entry.key === key);
+          if (held === undefined || held.phase === 'paused' || held.phase === 'canceled') return;
+
+          // Re-sync before resending. The server's offset is the only truth
+          // about where to carry on: the chunk that just failed may have landed
+          // in full, in part, or not at all, and only it knows which.
+          const state = await api(`${base}/uploads/${held.id}`).catch(() => null);
+          const resumeAt = state?.upload?.offset;
+          if (typeof resumeAt === 'number') patch(key, { offset: resumeAt, xhr: null });
           startedAt = Date.now();
-          startedFrom = body.upload?.offset ?? end;
+          startedFrom = typeof resumeAt === 'number' ? resumeAt : base_;
         }
       }
 
-      patch(key, { phase: 'importing', bytesPerSecond: 0 });
-      const finished = await api(`${base}/uploads/${items.current.find((e) => e.key === key)?.id}/finish`, {
-        method: 'POST',
-      });
+      patch(key, { phase: 'importing', bytesPerSecond: 0, code: null, error: null, hint: null });
+      const id = items.current.find((entry) => entry.key === key)?.id;
+
+      // Importing is the one step whose cost grows with the file, so on a large
+      // upload it is the likeliest to outlast the connection watching it. Every
+      // byte is already stored by this point, so a lost answer is worth asking
+      // for again — and the server treats a second ask as the same import.
+      let finished: Envelope | null = null;
+      let importAttempt = 0;
+      const importDeadline = Date.now() + IMPORT_RETRY_BUDGET_MS;
+      while (finished === null) {
+        let answer: Envelope | null = null;
+        try {
+          answer = await api(`${base}/uploads/${id}/finish`, { method: 'POST' });
+        } catch (error) {
+          // Only a missing answer is worth asking again for. An import that ran
+          // and failed says so, and repeating it would only fail again.
+          const failure = error instanceof ApiError ? error : null;
+          if (
+            failure === null ||
+            !isLostAnswer(failure.code, failure.status) ||
+            Date.now() > importDeadline
+          ) {
+            throw error;
+          }
+        }
+
+        if (answer?.upload?.status === 'done') {
+          finished = answer;
+          break;
+        }
+        // Either the answer was lost, or the import is still running and said
+        // so. Both mean the same thing here: wait, then ask how it went.
+        if (Date.now() > importDeadline) {
+          throw new ApiError(
+            { ok: false, code: 'IMPORT_SLOW', error: 'The import is still running. Reload to check on it.' },
+            504,
+          );
+        }
+        importAttempt += 1;
+        await sleep(backoffMs(importAttempt));
+        const state = await api(`${base}/uploads/${id}`).catch(() => null);
+        if (state?.upload?.status === 'done') finished = state;
+      }
+
       patch(key, {
         phase: 'done',
         offset: finished.upload?.offset ?? 0,
         name: finished.upload?.fileName ?? item.name,
+        code: null,
+        error: null,
+        hint: null,
       });
 
       // Everything settled: bring the page's own video list up to date. Swapped
@@ -544,7 +668,7 @@ const Uploader = ({ base }: { base: string }) => {
                         : '')}
               </span>
 
-              {item.phase === 'uploading' ? (
+              {item.phase === 'uploading' || item.phase === 'retrying' ? (
                 <button type="button" onClick={() => pause(item)}>
                   Pause
                 </button>
@@ -565,7 +689,10 @@ const Uploader = ({ base }: { base: string }) => {
             </div>
 
             {item.error === null ? null : (
-              <p class="pill reject upload-error">
+              // While retrying this is a note about a hiccup being handled, not
+              // a failure, so it does not get the alarming colour.
+              <p class={`pill upload-error${item.phase === 'retrying' ? '' : ' reject'}`}>
+                {item.phase === 'retrying' ? 'Connection lost — retrying. ' : ''}
                 {item.error}
                 {item.hint === null ? '' : ` ${item.hint}`}
                 {item.id === null ? '' : ` — ${item.code}, upload ${item.id}`}
