@@ -5,6 +5,7 @@ import * as ort from 'onnxruntime-node';
 
 import { requireBinary } from '@reeleel/core';
 
+import { APPEARANCE_CLASSES, torsoSignature } from './appearance.js';
 import { classSidecarPath, mappingFor, parseModelSidecar } from './classes.js';
 import { frameStream, viewFor } from './frames.js';
 import { clampBox, nonMaxSuppression, unletterbox } from './geometry.js';
@@ -333,7 +334,20 @@ export const runPipeline = async (options: PipelineOptions): Promise<PipelineRes
 
     const inSourceSpace: Detection[] = kept.map((detection) => {
       const box = clampBox(unletterbox(detection, view), options.sourceWidth, options.sourceHeight);
-      return { ...box, score: detection.score, classId: detection.classId };
+      /**
+       * Measured here, in the decoded frame, because this is the one place the
+       * pixels and the box are both to hand. The tracker uses it to refuse a
+       * re-acquisition that would hand one child's identity to another.
+       */
+      const appearance = APPEARANCE_CLASSES.has(mapping.byIndex[detection.classId] ?? '')
+        ? torsoSignature(frame.pixels, decoded, decoded, detection)
+        : null;
+      return {
+        ...box,
+        score: detection.score,
+        classId: detection.classId,
+        ...(appearance === null ? {} : { appearance }),
+      };
     });
 
     detectionCount += inSourceSpace.length;

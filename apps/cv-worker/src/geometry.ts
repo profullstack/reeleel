@@ -9,6 +9,14 @@ export interface Detection extends Box {
   score: number;
   /** Index into the model's class list. */
   classId: number;
+  /**
+   * Normalized torso colour histogram, when the caller measured one.
+   *
+   * Optional because everything that only needs geometry — NMS, letterboxing,
+   * the decoders — must keep working without it, and because a model run
+   * without frame pixels to hand has no appearance to offer.
+   */
+  appearance?: number[];
 }
 
 /**

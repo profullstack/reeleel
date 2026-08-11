@@ -65,6 +65,8 @@ export interface ScoredMoment {
   end: number;
   score: number;
   reasons: string[];
+  /** Where the moment peaked, so a later trim knows what it must not cut. */
+  peakTs?: number;
 }
 
 interface Point {
@@ -418,6 +420,21 @@ export const SIGNALS: Record<string, SignalFn> = {
   },
 };
 
+/**
+ * Which signals actually look at the athlete, and which only read the court.
+ *
+ * The distinction is the whole of what separates "your child's highlight" from
+ * "a busy moment in a gym". `activity_near_goal`, `high_motion` and
+ * `audio_spike` never reference the focal player at all — they are true of a
+ * scramble, of a fast break by the other team, and of a cheer routine at the
+ * final buzzer in exactly equal measure.
+ */
+export const SCENE_SIGNALS: ReadonlySet<string> = new Set([
+  'activity_near_goal',
+  'high_motion',
+  'audio_spike',
+]);
+
 export const scoreWindow = (
   context: SignalContext,
   plugin: SportPlugin,
@@ -445,7 +462,9 @@ export const scoreWindow = (
 
   const weights = ruleWeights(plugin);
   const reasons: string[] = [];
-  let total = 0;
+  let athleteTotal = 0;
+  let sceneTotal = 0;
+  const sceneReasons: string[] = [];
   let weightSum = 0;
 
   let definedWeight = 0;
@@ -462,10 +481,37 @@ export const scoreWindow = (
 
     weightSum += weight;
     if (strength <= 0) continue;
-    total += strength * weight;
+    if (SCENE_SIGNALS.has(id)) {
+      sceneTotal += strength * weight;
+      if (strength >= 0.4) sceneReasons.push(id);
+      continue;
+    }
+    athleteTotal += strength * weight;
     // Only name a reason once it actually contributed something visible.
     if (strength >= 0.4) reasons.push(id);
   }
+
+  /**
+   * Scene signals may amplify the athlete's moment. They may never originate one.
+   *
+   * Being *on screen* is not being *involved*, and the presence gate above only
+   * asks the former. Measured on the run that prompted this: an athlete standing
+   * still on the sideline while a cheer routine ran under the rim scored 0.417
+   * against a 0.35 threshold on `activity_near_goal` + `high_motion` alone — two
+   * signals that never once looked at him. That is how twenty seconds of
+   * cheerleaders reached the end of a highlight reel.
+   *
+   * Capping the scene contribution at the athlete's own keeps the trade honest:
+   * a scramble your child is genuinely in still scores full marks, because a
+   * child in the scramble is near the ball and moving, while a child watching one
+   * contributes nothing for the scene to double.
+   */
+  const total =
+    context.focal === null ? athleteTotal + sceneTotal : athleteTotal + Math.min(sceneTotal, athleteTotal);
+  if (context.focal !== null && athleteTotal <= 0) {
+    return { ts, score: 0, reasons: [] };
+  }
+  reasons.push(...sceneReasons);
 
   /**
    * A floor under the denominator, so a single measurable signal cannot carry a
@@ -617,6 +663,52 @@ export const explainScoring = (input: ScoringInput, plugin: SportPlugin): Scorin
 };
 
 /**
+ * How long a clip may keep rolling after the tracker has lost the athlete,
+ * while the ball they were playing is demonstrably still live.
+ *
+ * A moment ends the instant `focalAt` returns null, because a window without the
+ * athlete scores zero and the run flushes. That is the correct rule for *starting*
+ * a moment and the wrong one for ending it: the tracker losing a child is a fact
+ * about the tracker, not about the play. Measured on a synthetic drive that
+ * reproduces the reported failure — athlete tracked 20.0s to 30.0s, ball still in
+ * his hands to 40.0s — the clip came out 17.0s to 31.0s, cutting the moment he
+ * went up for the shot.
+ */
+export const PLAY_TAIL_SECONDS = 6;
+
+/**
+ * Full strength of the ball-proximity signal, reused as "this athlete was on the
+ * ball" — the condition that makes a play worth following past its owner.
+ */
+const POSSESSION_FRACTION = 0.08;
+
+/**
+ * How far past `fromTs` the play the athlete was running is still going.
+ *
+ * Deliberately narrow: it only fires when the athlete was *on the ball* as their
+ * track ran out, and it only follows that same ball, so it extends a possession
+ * and never a coincidence.
+ */
+export const playTailEnd = (
+  context: SignalContext,
+  fromTs: number,
+  limitTs: number,
+  step: number,
+): number => {
+  const player = focalAt(context, fromTs);
+  const ball = ballAt(context, fromTs);
+  if (player === null || ball === null) return fromTs;
+  if (distance(player, ball.point) > context.diagonal * POSSESSION_FRACTION) return fromTs;
+
+  let end = fromTs;
+  for (let ts = fromTs + step; ts <= limitTs; ts += step) {
+    if (sampleAt(ball.track, ts) === null) break;
+    end = ts;
+  }
+  return end;
+};
+
+/**
  * Scores every window, then merges runs above `minScore` into moments, applying
  * the sport's pre/post roll and duration clamps.
  */
@@ -646,24 +738,39 @@ export const computeMoments = (input: ScoringInput, plugin: SportPlugin): Scored
     }
 
     const peak = run.reduce((best, w) => (w.score > best.score ? w : best), firstWindow);
-    const start = Math.max(0, firstWindow.ts - preRollSeconds);
+    let start = Math.max(0, firstWindow.ts - preRollSeconds);
     let end = Math.min(input.durationSeconds, lastWindow.ts + postRollSeconds);
+
+    /**
+     * The run stopped because the athlete stopped being trackable. If the ball
+     * he was holding is still in play, the play is still worth watching.
+     */
+    const tail = playTailEnd(
+      context,
+      lastWindow.ts,
+      Math.min(input.durationSeconds, lastWindow.ts + PLAY_TAIL_SECONDS),
+      step,
+    );
+    const followed = tail > lastWindow.ts;
+    if (followed) end = Math.min(input.durationSeconds, Math.max(end, tail + postRollSeconds));
 
     if (end - start < minDurationSeconds) {
       end = Math.min(input.durationSeconds, start + minDurationSeconds);
     }
     if (end - start > maxDurationSeconds) {
-      // Keep the peak centred when we have to trim a long run.
-      const half = maxDurationSeconds / 2;
-      const trimmedStart = Math.max(0, Math.min(peak.ts - half, input.durationSeconds - maxDurationSeconds));
-      moments.push({
-        start: trimmedStart,
-        end: Math.min(input.durationSeconds, trimmedStart + maxDurationSeconds),
-        score: peak.score,
-        reasons: [...new Set(run.flatMap((w) => w.reasons))],
-      });
-      run = [];
-      return;
+      if (followed) {
+        /**
+         * Take the length out of the run-up, never out of the finish. Trimming
+         * around the peak is right for a long scrappy passage and exactly wrong
+         * here, where the last second is the shot we stayed for.
+         */
+        start = Math.max(0, end - maxDurationSeconds);
+      } else {
+        // Keep the peak centred when we have to trim a long run.
+        const half = maxDurationSeconds / 2;
+        start = Math.max(0, Math.min(peak.ts - half, input.durationSeconds - maxDurationSeconds));
+        end = Math.min(input.durationSeconds, start + maxDurationSeconds);
+      }
     }
 
     moments.push({
@@ -671,6 +778,7 @@ export const computeMoments = (input: ScoringInput, plugin: SportPlugin): Scored
       end,
       score: peak.score,
       reasons: [...new Set(run.flatMap((w) => w.reasons))],
+      peakTs: peak.ts,
     });
     run = [];
   };
@@ -684,7 +792,9 @@ export const computeMoments = (input: ScoringInput, plugin: SportPlugin): Scored
   }
   flush();
 
-  return mergeOverlapping(moments);
+  return mergeOverlapping(moments).map((moment) =>
+    capDuration(moment, maxDurationSeconds, input.durationSeconds),
+  );
 };
 
 /** Pre/post roll frequently makes neighbouring moments overlap; fuse those. */
@@ -696,6 +806,8 @@ export const mergeOverlapping = (moments: ScoredMoment[]): ScoredMoment[] => {
     const previous = merged[merged.length - 1];
     if (previous !== undefined && moment.start <= previous.end) {
       previous.end = Math.max(previous.end, moment.end);
+      // The peak of the fused moment is the peak of its better half.
+      if (moment.score > previous.score) previous.peakTs = moment.peakTs;
       previous.score = Math.max(previous.score, moment.score);
       previous.reasons = [...new Set([...previous.reasons, ...moment.reasons])];
     } else {
@@ -703,4 +815,28 @@ export const mergeOverlapping = (moments: ScoredMoment[]): ScoredMoment[] => {
     }
   }
   return merged;
+};
+
+/**
+ * Holds a moment to the sport's maximum, centred on its peak.
+ *
+ * `maxDurationSeconds` was applied per run and then thrown away: `mergeOverlapping`
+ * fuses any two moments whose pre/post roll touches and never re-checks the
+ * length, so basketball's 15-second cap produced a 29-second clip from two legal
+ * 15-second ones. That is the arithmetic behind a twenty-second tail on a reel of
+ * five-second highlights.
+ */
+export const capDuration = (
+  moment: ScoredMoment,
+  maxDurationSeconds: number,
+  durationSeconds: number,
+): ScoredMoment => {
+  if (maxDurationSeconds <= 0 || moment.end - moment.start <= maxDurationSeconds) return moment;
+  const half = maxDurationSeconds / 2;
+  const centre = moment.peakTs ?? (moment.start + moment.end) / 2;
+  const start = Math.max(
+    moment.start,
+    Math.min(centre - half, Math.max(0, moment.end - maxDurationSeconds)),
+  );
+  return { ...moment, start, end: Math.min(moment.end, durationSeconds, start + maxDurationSeconds) };
 };

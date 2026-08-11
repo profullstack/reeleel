@@ -1,3 +1,4 @@
+import { similarity } from './appearance.js';
 import { iou } from './geometry.js';
 import type { Box, Detection } from './geometry.js';
 
@@ -32,6 +33,14 @@ export interface Track {
   confidence: number;
   velocity: { x: number; y: number };
   lastBox: Box;
+  /**
+   * Running mean of this track's torso colour, null until something measured
+   * one. Only observations contribute, so a track that vanishes for a second
+   * comes back still remembering the shirt it went away wearing.
+   */
+  appearance: number[] | null;
+  /** How many appearance observations the mean is over. */
+  appearanceCount: number;
 }
 
 export interface TrackerOptions {
@@ -71,6 +80,30 @@ export interface TrackerOptions {
    * leaves anything with a buffer of 0 — every person on court — untouched.
    */
   classBuffer: Record<string, number>;
+  /**
+   * Torso colour a lost track and a detection must share before they may be
+   * joined, as histogram intersection in [0,1].
+   *
+   * Overlap alone cannot tell one child from another, and the moment that costs
+   * is re-acquisition. Measured on the shipped tracker: a player standing at
+   * x=900 who leaves, followed half a second later by an opponent arriving at
+   * x=905, produced *one* track spanning both children — `maxAge` of 30 frames
+   * tolerates a second of absence, and greedy IoU is delighted to hand the old
+   * identity to whoever now occupies the space. Nothing downstream can undo
+   * that: re-identification vets one track against another, so a track that is
+   * already two children has no seam left to find. That is how a reel followed
+   * #14 in black.
+   *
+   * White against black measures 0.28 on this histogram and a shirt against
+   * itself close to 1.0, so the bar sits comfortably between them. It is only
+   * ever applied to a track that has *missed* a frame; consecutive frames still
+   * associate on geometry alone, where geometry is reliable and cheap.
+   *
+   * When it refuses a join the track simply ends and a new one begins, which is
+   * the recoverable failure: a fragment is something the colour-vetted stitcher
+   * can put back together, and a spliced identity is not.
+   */
+  reacquireColourFloor: number;
 }
 
 export const DEFAULT_TRACKER_OPTIONS: TrackerOptions = {
@@ -81,6 +114,23 @@ export const DEFAULT_TRACKER_OPTIONS: TrackerOptions = {
   minLength: 3,
   classHighThreshold: {},
   classBuffer: {},
+  reacquireColourFloor: 0.5,
+};
+
+/**
+ * Whether a track may be re-attached to this detection.
+ *
+ * Answers "yes" whenever there is no evidence — an unmeasured detection, a
+ * track that has never been seen in colour, a class nobody takes a torso from —
+ * so a pipeline that supplies no appearance behaves exactly as it always did.
+ */
+export const appearanceAgrees = (track: Track, detection: Detection, floor: number): boolean => {
+  // Consecutive frames: a box cannot have moved far, and overlap already said so.
+  if (track.missing <= 0) return true;
+  if (track.appearance === null) return true;
+  const observed = detection.appearance;
+  if (observed === undefined || observed.length === 0) return true;
+  return similarity(track.appearance, observed) >= floor;
 };
 
 const centre = (box: Box): { x: number; y: number } => ({
@@ -136,6 +186,7 @@ const associate = (
   detections: Detection[],
   iouThreshold: number,
   bufferFor: (track: Track) => number = () => 0,
+  allow: (track: Track, detection: Detection) => boolean = () => true,
 ): { matches: Pair[]; unmatchedTracks: number[]; unmatchedDetections: number[] } => {
   const candidates: Pair[] = [];
 
@@ -144,6 +195,7 @@ const associate = (
     const predicted = inflate(predict(track), buffer);
     detections.forEach((detection, detectionIndex) => {
       if (detection.classId !== track.classId) return;
+      if (!allow(track, detection)) return;
       const score = iou(predicted, inflate(box(detection), buffer));
       if (score >= iouThreshold) candidates.push({ trackIndex, detectionIndex, score });
     });
@@ -182,6 +234,8 @@ export class ByteTracker {
   }
 
   private open(detection: Detection, className: string, frame: number, ts: number): void {
+    const appearance = detection.appearance;
+    const measured = appearance !== undefined && appearance.length > 0;
     this.active.push({
       id: this.nextId++,
       classId: detection.classId,
@@ -191,6 +245,8 @@ export class ByteTracker {
       confidence: detection.score,
       velocity: { x: 0, y: 0 },
       lastBox: box(detection),
+      appearance: measured ? [...appearance] : null,
+      appearanceCount: measured ? 1 : 0,
     });
   }
 
@@ -203,6 +259,21 @@ export class ByteTracker {
     // Running mean keeps one lucky frame from inflating a weak track.
     track.confidence = (track.confidence * track.points.length + detection.score) / (track.points.length + 1);
     track.points.push({ frame, ts, ...box(detection), confidence: detection.score });
+
+    // The same averaging for colour, so one crop caught mid-occlusion cannot
+    // redefine what this player looks like.
+    const observed = detection.appearance;
+    if (observed === undefined || observed.length === 0) return;
+    if (track.appearance === null) {
+      track.appearance = [...observed];
+      track.appearanceCount = 1;
+      return;
+    }
+    const n = track.appearanceCount;
+    track.appearance = track.appearance.map(
+      (value, i) => (value * n + (observed[i] ?? 0)) / (n + 1),
+    );
+    track.appearanceCount = n + 1;
   }
 
   /** Feeds one frame of detections. */
@@ -218,13 +289,19 @@ export class ByteTracker {
       return override ?? this.options.highThreshold;
     };
     const bufferFor = (track: Track): number => this.options.classBuffer[track.className] ?? 0;
+    /**
+     * A track that has lost sight of its subject must recognise the shirt before
+     * it is allowed to claim whoever is standing there now.
+     */
+    const allow = (track: Track, detection: Detection): boolean =>
+      appearanceAgrees(track, detection, this.options.reacquireColourFloor);
 
     const usable = detections.filter((d) => d.score >= this.options.lowThreshold);
     const high = usable.filter((d) => d.score >= barFor(d));
     const low = usable.filter((d) => d.score < barFor(d));
 
     // Pass 1: confident detections against every live track.
-    const first = associate(this.active, high, this.options.iouThreshold, bufferFor);
+    const first = associate(this.active, high, this.options.iouThreshold, bufferFor, allow);
     for (const match of first.matches) {
       const track = this.active[match.trackIndex];
       const detection = high[match.detectionIndex];
@@ -234,7 +311,7 @@ export class ByteTracker {
     // Pass 2: the BYTE step — try the leftovers against tracks that missed out,
     // with a looser bar, so an occluded player is rescued rather than lost.
     const stranded = first.unmatchedTracks.map((i) => this.active[i]).filter((t): t is Track => t !== undefined);
-    const second = associate(stranded, low, this.options.iouThreshold * 0.75, bufferFor);
+    const second = associate(stranded, low, this.options.iouThreshold * 0.75, bufferFor, allow);
     const rescued = new Set<Track>();
     for (const match of second.matches) {
       const track = stranded[match.trackIndex];

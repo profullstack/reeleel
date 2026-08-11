@@ -179,6 +179,11 @@ export const proposeAthleteTracks = async (
       pixels,
       frameWidth,
       threshold: options.threshold ?? COLOUR_FLOOR,
+      /**
+       * The shirt the user actually told us about. Both teams field a 14, and
+       * the number is the half of "#14 in white" that no detector can check.
+       */
+      jerseyColor: athlete.jerseyColor,
       ...(options.limit === undefined ? {} : { limit: options.limit }),
     }),
     referenceTrackIds: [...assigned],

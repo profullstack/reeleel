@@ -16,6 +16,32 @@ import { emitChanged } from './live.js';
  * the choice is made by looking.
  */
 
+/**
+ * Shirt colours the matcher can actually hold a track to.
+ *
+ * Kept in step with `JERSEY_BINS` in `packages/core/src/stitch.ts` by
+ * `jerseycolours.test.ts`, which fails if the two drift apart — a colour offered
+ * here that the matcher cannot bin would be a promise the panel's own copy makes
+ * and nothing keeps.
+ */
+export const JERSEY_COLOURS = [
+  'white',
+  'black',
+  'grey',
+  'red',
+  'orange',
+  'yellow',
+  'green',
+  'teal',
+  'blue',
+  'navy',
+  'purple',
+  'pink',
+  'maroon',
+  'gold',
+  'silver',
+] as const;
+
 interface Candidate {
   trackId: string;
   videoId: string;
@@ -317,11 +343,24 @@ const Identify = ({ base }: { base: string }) => {
         />
         <input
           type="text"
+          list="jersey-colours"
           placeholder="Shirt colour, e.g. white"
           value={jerseyColor}
           onInput={(event: Event) => setJerseyColor((event.target as HTMLInputElement).value)}
           style="font:inherit;padding:.35rem;border-radius:.4rem;max-width:12rem"
         />
+        {/*
+          Free text still works — an unrecognised word simply leaves matching as
+          permissive as it was, rather than rejecting every child in the game.
+          The list is here because a colour the matcher has no bins for is a
+          colour it cannot hold anyone to, and "teal" is help nobody can guess.
+          Mirrors JERSEY_BINS in packages/core/src/stitch.ts.
+        */}
+        <datalist id="jersey-colours">
+          {JERSEY_COLOURS.map((colour) => (
+            <option key={colour} value={colour} />
+          ))}
+        </datalist>
         <input
           type="text"
           placeholder="Team (optional)"

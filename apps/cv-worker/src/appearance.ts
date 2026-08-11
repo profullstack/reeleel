@@ -147,6 +147,41 @@ export const normalize = (histogram: Float64Array | number[]): number[] => {
 };
 
 /**
+ * Classes a torso can meaningfully be taken from.
+ *
+ * A ball has no shirt. Measuring one anyway and then gating its re-acquisition
+ * on colour would spend the ball coverage that tiling and the buffered IoU were
+ * added to win, on evidence that says nothing about which ball this is.
+ */
+export const APPEARANCE_CLASSES: ReadonlySet<string> = new Set([
+  'player',
+  'goalkeeper',
+  'goalie',
+  'referee',
+  'umpire',
+]);
+
+/**
+ * One box's torso colour, measured on the frame it was detected in.
+ *
+ * The box must already be in the same pixel space as `pixels` — this is called
+ * from the detection loop, where both are the decoded frame, so the scale is 1
+ * and there is no proxy to reconcile.
+ */
+export const torsoSignature = (
+  pixels: Buffer | Uint8Array,
+  frameWidth: number,
+  frameHeight: number,
+  box: Box,
+): number[] | null => {
+  const rect = torsoRect(box, 1, frameWidth, frameHeight);
+  if (rect === null) return null;
+  const histogram = new Float64Array(BIN_COUNT);
+  if (accumulate(pixels, frameWidth, rect, histogram) <= 0) return null;
+  return normalize(histogram);
+};
+
+/**
  * Histogram intersection: 1 for identical signatures, 0 for no shared colour at
  * all. Chosen over a Euclidean distance because it degrades gracefully when a
  * crop catches some background — the extra mass simply fails to overlap,
