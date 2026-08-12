@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -46,11 +46,15 @@ const project = async (name: string): Promise<string> => {
   return created.root;
 };
 
-/** A video row with a probe, without needing ffprobe or a real file. */
+/** A video row with a probe, without needing ffprobe or real footage. */
 const video = async (root: string, id: string, durationSeconds = 60): Promise<void> => {
   const { execute, projectDb } = await import('./db.js');
   const db = await projectDb(root);
   const now = new Date().toISOString();
+  // Empty, but present: analyzeProject refuses to run when a source file has
+  // gone missing, and never opens one it is not decoding.
+  const file = path.join(home, `${id}.mp4`);
+  writeFileSync(file, '');
   await execute(
     db,
     `INSERT INTO source_videos (id, project_id, path, probe_json, created_at, updated_at)
@@ -58,7 +62,7 @@ const video = async (root: string, id: string, durationSeconds = 60): Promise<vo
     [
       id,
       'prj_test',
-      `/tmp/${id}.mp4`,
+      file,
       JSON.stringify({ durationSeconds, video: { width: 1920, height: 1080 } }),
       now,
       now,
@@ -305,5 +309,44 @@ describe('scoring says when nobody is bound', () => {
 
     const result = await generateMoments(root, { replace: true });
     expect(result.unboundAthlete).toBeNull();
+  });
+
+  it('tells him once, not twice', async () => {
+    /**
+     * Measured on the production run that shipped the warning: it arrived in the
+     * job log twice, because it is written where it is discovered — so a run
+     * that fails later still says it — and every warning is flushed again when
+     * the run completes. Two copies of "nothing here is your child" reads as two
+     * separate things wrong with the footage.
+     */
+    const root = await project('logged-once');
+    await video(root, 'vid_a');
+    const { createTrack } = await import('./tracks.js');
+    const { addAthlete, updateAthlete } = await import('./athletes.js');
+    const { analyzeProject } = await import('./analyze.js');
+    const { getJobLogs } = await import('./jobs.js');
+
+    await createTrack(root, {
+      videoId: 'vid_a',
+      className: 'player',
+      confidence: 0.9,
+      samples: walk(0, 20, (ts) => ({ x: 100 + ts * 40, y: 500 })),
+    });
+    const athlete = await addAthlete(root, {
+      name: 'Fred',
+      jerseyNumber: '14',
+      jerseyColor: 'white',
+    });
+    await updateAthlete(root, athlete.id, { focal: true });
+
+    const run = await analyzeProject(root, { scoreOnly: true });
+    const said = (await getJobLogs(root, run.job.id)).filter((entry) =>
+      entry.message.includes('is set as your athlete'),
+    );
+    expect(said).toHaveLength(1);
+
+    // Still returned to the caller, which is what the page renders.
+    const returned = run.warnings.filter((warning) => warning.includes('is set as your athlete'));
+    expect(returned).toHaveLength(1);
   });
 });
