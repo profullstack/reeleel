@@ -92,11 +92,54 @@ describe('following the play past the athlete', () => {
     );
   });
 
+  it('keeps the drive and the shot in one clip', () => {
+    /**
+     * This used to assert `start > 17` — that the cap had eaten into the
+     * run-up — because a 21-second possession could not fit inside a 15-second
+     * maximum and something had to go. A possession is not fifteen seconds, and
+     * the cap now says so, which leaves nothing to trim: the whole drive from
+     * the pre-roll to the ball going dead is one clip.
+     */
+    const [moment] = moments;
+    expect(moment?.start).toBeCloseTo(17, 2);
+    expect(moment?.end).toBeGreaterThan(34);
+  });
+
   it('takes the length out of the run-up rather than the finish', () => {
     // Trimming around the peak is right for a long scrappy passage and exactly
     // wrong here, where the last second is the shot we stayed for.
-    const [moment] = moments;
-    expect(moment?.start).toBeGreaterThan(17);
+    const capped = capDuration(
+      { start: 100, end: 130, score: 0.6, reasons: [], peakTs: 120 },
+      plugin.moments.maxDurationSeconds,
+      300,
+    );
+    expect(capped.end).toBe(130);
+    expect(capped.start).toBe(130 - plugin.moments.maxDurationSeconds);
+  });
+
+  it('keeps following him when the ball detection blinks out', () => {
+    /**
+     * A basketball is about six pixels across once a 1080p frame becomes a
+     * 416x416 tensor, and the detector emitted 4,067 separate ball fragments on
+     * the game that prompted this. Ending the tail the instant one of them ends
+     * is reading the detector, not the play — he is still standing there with
+     * it in his hands.
+     */
+    const blinking: TrackSeries = {
+      id: 'trk_ball',
+      className: 'ball',
+      samples: dense(20, 31, (ts) => ({ x: 310 + (ts - 20) * 90, y: 560 })),
+    };
+    const stillThere: TrackSeries = {
+      id: 'trk_focal',
+      className: 'player',
+      samples: dense(20, 38, (ts) => ({ x: 300 + (ts - 20) * 90, y: 600 })),
+    };
+    const [moment] = computeMoments(
+      { ...input, tracks: [stillThere, blinking, hoop, ...crowd] },
+      plugin,
+    );
+    expect(moment?.end ?? 0).toBeGreaterThan(34);
   });
 
   it('does not follow a ball the athlete never had', () => {

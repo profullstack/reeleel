@@ -11,7 +11,8 @@ import { projectDir } from './layout.js';
 import { getClip, listClips, updateClip } from './clips.js';
 import { readManifest } from './projects.js';
 import { getReel } from './reels.js';
-import { loadTrackSeries } from './tracks.js';
+import { stitchSeries } from './scoring.js';
+import { loadTrackSeries, tracksForAthlete } from './tracks.js';
 import type { AspectRatio, Clip, Reel } from './types.js';
 import { getVideo, listVideos } from './videos.js';
 
@@ -118,12 +119,42 @@ export const buildClipFilter = async (
     return scaleAndPad;
   }
 
+  /**
+   * The camera follows the child the user pointed at — all of them, or none.
+   *
+   * Two faults, one line. It read `focal_track_id`, which is a single fragment
+   * of an athlete the tracker breaks into dozens, so the crop held him for the
+   * seconds that fragment covered and drifted for the rest of the clip; scoring
+   * has stitched the whole set since the appearance matcher landed and this
+   * never did. And when the athlete had no bound track at all it fell through to
+   * `tracks.find(className === 'player')` — the first player in the list —
+   * so `follow-player` framed a stranger and looked, on the export, exactly like
+   * tracking that had lost the child. Production hit precisely that: a focal
+   * athlete named "#14 in white" with `focal_track_id` null and no assigned
+   * tracks, and 38 clips that followed whoever the detector happened to see
+   * first. With nobody bound, `follow-player` now falls back to the ball and
+   * then to the wide frame, which is honest about what it knows.
+   */
   const focalAthlete = await getFocalAthlete(root);
-  const focal =
-    tracks.find((track) => track.id === focalAthlete?.focalTrackId) ??
-    tracks.find((track) => track.className === 'player') ??
-    null;
+  const focalIds =
+    focalAthlete === null
+      ? []
+      : [
+          ...new Set([
+            ...(await tracksForAthlete(root, focalAthlete.id)),
+            ...(focalAthlete.focalTrackId === null ? [] : [focalAthlete.focalTrackId]),
+          ]),
+        ];
+  const focal = stitchSeries(tracks, focalIds);
   const ball = tracks.find((track) => track.className === 'ball') ?? null;
+
+  /**
+   * Nothing to follow is the same case as no tracks at all, two lines up: the
+   * path collapses to the centre of the frame, and a static 55% centre crop is
+   * an invented camera move that throws away half the resolution to say
+   * nothing. Keep the full frame instead.
+   */
+  if (focal === null && ball === null) return scaleAndPad;
 
   const cropPath = computeCropPath({
     mode: clip.cameraMode,
