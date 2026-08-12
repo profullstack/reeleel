@@ -128,6 +128,6 @@ describe('client-supplied ids', () => {
   });
 
   it('falls back to a server id when the client offers none', () => {
-    expect(beginUpload({ projectRef: 'demo' }).id).toMatch(/^up_[a-f0-9]{8}$/);
+    expect(beginUpload({ projectRef: 'demo' }).id).toMatch(/^up_[a-f0-9]{16}$/);
   });
 });
