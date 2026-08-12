@@ -1,6 +1,8 @@
 /** @jsxImportSource hono/jsx */
 import type { FC } from 'hono/jsx';
 
+import { StatsTracker } from './tracker.js';
+
 /**
  * The public front page.
  *
@@ -200,6 +202,7 @@ export const LandingPage: FC<{ signedIn: boolean }> = ({ signedIn }) => (
       <link rel="apple-touch-icon" href="/brand/apple-touch-icon.png" sizes="180x180" />
       <meta name="theme-color" content="#05060e" />
       <style dangerouslySetInnerHTML={{ __html: STYLES }} />
+      <StatsTracker />
     </head>
     <body>
       <div class="glow" aria-hidden="true" />
