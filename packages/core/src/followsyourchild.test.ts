@@ -210,7 +210,45 @@ describe('scoring says when nobody is bound', () => {
     await updateAthlete(root, athlete.id, { focal: true });
 
     const result = await generateMoments(root, { replace: true });
-    expect(result.unboundAthlete).toEqual({ id: athlete.id, label: 'Fred (#14 in white)' });
+    expect(result.unboundAthlete).toEqual({
+      id: athlete.id,
+      label: 'Fred (#14 in white)',
+      videoIds: ['vid_a'],
+    });
+  });
+
+  it('counts him as bound only in the footage he was marked in', async () => {
+    /**
+     * The production shape, and the one a project-wide check gets wrong: fifteen
+     * fragments of the athlete, all of them on a 91-second clip, none on the
+     * hour-long game. `tracksForAthlete` is not empty, so "is anyone bound?"
+     * answers yes while the game scores as if nobody had ever been identified.
+     */
+    const root = await project('othervideo');
+    await video(root, 'vid_clip');
+    await video(root, 'vid_game');
+    const { createTrack, assignTracksToAthlete } = await import('./tracks.js');
+    const { addAthlete, updateAthlete } = await import('./athletes.js');
+    const { generateMoments } = await import('./moments.js');
+
+    const marked = await createTrack(root, {
+      videoId: 'vid_clip',
+      className: 'player',
+      confidence: 0.9,
+      samples: walk(0, 20, (ts) => ({ x: 100 + ts * 40, y: 500 })),
+    });
+    await createTrack(root, {
+      videoId: 'vid_game',
+      className: 'player',
+      confidence: 0.9,
+      samples: walk(0, 20, (ts) => ({ x: 900 + ts * 10, y: 400 })),
+    });
+    const athlete = await addAthlete(root, { name: 'Fred', jerseyNumber: '14' });
+    await updateAthlete(root, athlete.id, { focalTrackId: marked.id, focal: true });
+    await assignTracksToAthlete(root, athlete.id, [marked.id]);
+
+    const result = await generateMoments(root, { replace: true });
+    expect(result.unboundAthlete?.videoIds).toEqual(['vid_game']);
   });
 
   it('does not stamp his name on moments no signal of his contributed to', async () => {

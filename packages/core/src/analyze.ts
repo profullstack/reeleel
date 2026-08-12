@@ -681,11 +681,19 @@ export const analyzeProject = async (
      * which is exactly how it was reported. Say it whatever the count.
      */
     if (scored.unboundAthlete !== null) {
+      /**
+       * Name the footage, because "no track is bound" is usually false about the
+       * project and true about the video anyone cares about: the project this
+       * came from had fifteen fragments of the athlete, every one of them on a
+       * 91-second clip, and none on the hour-long game being scored.
+       */
+      const where = scored.unboundAthlete.videoIds.join(', ');
       const message =
-        `${scored.unboundAthlete.label} is set as your athlete, but no track is bound to them, ` +
-        'so nothing in these suggestions followed them — they score the court, not your child. ' +
-        'Open "Identify your athlete", point at them on the footage, and it re-scores in seconds ' +
-        'without re-running detection.';
+        `${scored.unboundAthlete.label} is set as your athlete, but nothing in ${where} is ` +
+        'bound to them, so nothing in these suggestions followed them — they score the court, ' +
+        'not your child. Marking them on other footage does not carry over; a track belongs to ' +
+        'the video it was detected in. Open "Identify your athlete", pick that video, point at ' +
+        'them, and it re-scores in seconds without re-running detection.';
       warnings.push(message);
       await logJob(root, job.id, message, 'warn');
     }

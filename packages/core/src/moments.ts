@@ -258,7 +258,7 @@ export interface GenerateMomentsResult {
    * no warning anywhere because the diagnosis only speaks when a run returns
    * nothing at all.
    */
-  unboundAthlete: { id: string; label: string } | null;
+  unboundAthlete: { id: string; label: string; videoIds: string[] } | null;
   /**
    * Why each video scored the way it did. Computed always, not only on failure:
    * a run that produced two moments when it should have produced twenty is just
@@ -306,7 +306,6 @@ export const generateMoments = async (
             ...(focal.focalTrackId === null ? [] : [focal.focalTrackId]),
           ]),
         ];
-  const boundAthleteId = focalTrackIds.length > 0 && focal !== null ? focal.id : null;
 
   let replaced = 0;
   if (options.replace === true) {
@@ -317,6 +316,7 @@ export const generateMoments = async (
 
   let generated = 0;
   const skippedVideos: string[] = [];
+  const unfollowedVideos: string[] = [];
   const diagnoses: { videoId: string; diagnosis: ScoringDiagnosis }[] = [];
 
   for (const video of videos) {
@@ -325,6 +325,22 @@ export const generateMoments = async (
       skippedVideos.push(video.id);
       continue;
     }
+
+    /**
+     * Whether the athlete was pointed at *in this footage*.
+     *
+     * Being bound is a fact about a video, not about a project. Marking your
+     * child on a 91-second clip and then importing the hour-long game leaves
+     * `tracksForAthlete` non-empty and every one of its ids belonging to the
+     * other video — so a project-wide check calls him bound, the scene signals
+     * score the game on their own exactly as if he had never been identified,
+     * and the warning that exists to catch that stays quiet. That is the shape
+     * of the production project this came from: fifteen fragments, all fifteen
+     * on the short clip, none on the game anybody wants a reel of.
+     */
+    const here = new Set(tracks.map((track) => track.id));
+    const followedHere = focalTrackIds.filter((id) => here.has(id));
+    if (focal !== null && followedHere.length === 0) unfollowedVideos.push(video.id);
 
     const input: ScoringInput = {
       durationSeconds: video.probe?.durationSeconds ?? 0,
@@ -338,7 +354,7 @@ export const generateMoments = async (
      * covered 24 seconds of a five-minute game, because the tracker had split
      * that child into pieces and only one piece was bound.
      */
-    if (focalTrackIds.length > 0) input.focalTrackIds = focalTrackIds;
+    if (followedHere.length > 0) input.focalTrackIds = followedHere;
     if (options.windowSeconds !== undefined) input.windowSeconds = options.windowSeconds;
 
     diagnoses.push({ videoId: video.id, diagnosis: explainScoring(input, plugin) });
@@ -352,7 +368,7 @@ export const generateMoments = async (
         videoId: video.id,
         // Stamping the athlete on a moment no signal of theirs contributed to
         // is the claim the reel is built on, and it was not true.
-        athleteId: boundAthleteId,
+        athleteId: followedHere.length > 0 && focal !== null ? focal.id : null,
         manual: false,
         included: null,
       });
@@ -366,6 +382,8 @@ export const generateMoments = async (
     skippedVideos,
     diagnoses,
     unboundAthlete:
-      focal !== null && boundAthleteId === null ? { id: focal.id, label: athleteLabel(focal) } : null,
+      focal !== null && unfollowedVideos.length > 0
+        ? { id: focal.id, label: athleteLabel(focal), videoIds: unfollowedVideos }
+        : null,
   };
 };
