@@ -3,6 +3,8 @@ import type { FC, PropsWithChildren } from 'hono/jsx';
 
 import { isAuthEnabled } from '@reeleel/api';
 
+import { StatsTracker } from './tracker.js';
+
 /**
  * One stylesheet, inline, no CDN. The desktop app runs offline by design and
  * the web app should not be the one thing that needs a network to look right.
@@ -181,6 +183,7 @@ export const Layout: FC<PropsWithChildren<{ title: string }>> = ({ title, childr
             "if('serviceWorker' in navigator){addEventListener('load',function(){navigator.serviceWorker.register('/sw.js').catch(function(){})})}",
         }}
       />
+      <StatsTracker />
     </head>
     <body>
       <header>
