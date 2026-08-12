@@ -270,6 +270,14 @@ export const analyzeProject = async (
   const preset = options.preset ?? loadConfig().analysis.preset;
   const settings = settingsForPreset(preset);
   const warnings: string[] = [];
+  /**
+   * Warnings reach the user twice over: the live log as the run happens, and
+   * the summary this returns. Most are only pushed and get written by the flush
+   * at the end, but one is logged the moment it is known — so remember what has
+   * already been said, or the flush repeats it and the log reads as two
+   * separate problems.
+   */
+  const alreadyLogged = new Set<string>();
   const stagesRun: string[] = [];
   /** Athlete bindings captured before a re-detection wipes their tracks. */
   let rememberedBindings: Awaited<ReturnType<typeof snapshotAthleteBindings>> = [];
@@ -695,6 +703,7 @@ export const analyzeProject = async (
         'the video it was detected in. Open "Identify your athlete", pick that video, point at ' +
         'them, and it re-scores in seconds without re-running detection.';
       warnings.push(message);
+      alreadyLogged.add(message);
       await logJob(root, job.id, message, 'warn');
     }
 
@@ -813,7 +822,10 @@ export const analyzeProject = async (
         }
       }
     }
-    for (const warning of warnings) await logJob(root, job.id, warning, 'warn');
+    for (const warning of warnings) {
+      if (alreadyLogged.has(warning)) continue;
+      await logJob(root, job.id, warning, 'warn');
+    }
 
     const finished = await updateJob(root, job.id, {
       status: 'completed',
