@@ -165,8 +165,15 @@ const SPECS: SportSpec[] = [
       ['scoreboard', 'Scoreboard in frame'],
       ['bench', 'Team bench area'],
     ],
-    // Possessions are short and the court is small, so plays are tighter.
-    play: { pre: 3, post: 2, min: 3, max: 15 },
+    /**
+     * The court is small and the pre-roll can be short, but a possession is not
+     * fifteen seconds. Inbound, walk it up, run the set, shoot — a youth
+     * possession with no shot clock routinely runs past twenty, and the cap was
+     * cutting it at the point the shot went up, which is the only part anybody
+     * wanted. Held to the FIBA shot clock: long enough for a whole possession,
+     * short enough that a scramble cannot become a highlight of its own.
+     */
+    play: { pre: 3, post: 2, min: 3, max: 24 },
   },
   {
     id: 'baseball',

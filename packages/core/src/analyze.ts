@@ -670,6 +670,27 @@ export const analyzeProject = async (
     stagesRun.push('scoring');
 
     /**
+     * The failure that looks like success.
+     *
+     * Every warning below is gated on `momentsGenerated === 0`, which is the
+     * shape of failure this job knew about. An athlete who has been named but
+     * never pointed at produces the other shape: the scene signals still fire,
+     * so the run returns a full set of moments about a busy gym, says "done" in
+     * green, and the reel that comes out follows other people's children. It is
+     * indistinguishable, from the outside, from tracking that lost the child —
+     * which is exactly how it was reported. Say it whatever the count.
+     */
+    if (scored.unboundAthlete !== null) {
+      const message =
+        `${scored.unboundAthlete.label} is set as your athlete, but no track is bound to them, ` +
+        'so nothing in these suggestions followed them — they score the court, not your child. ' +
+        'Open "Identify your athlete", point at them on the footage, and it re-scores in seconds ' +
+        'without re-running detection.';
+      warnings.push(message);
+      await logJob(root, job.id, message, 'warn');
+    }
+
+    /**
      * What the run actually produced.
      *
      * These numbers were computed and then discarded: analyzeProject returned

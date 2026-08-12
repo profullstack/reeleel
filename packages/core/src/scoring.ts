@@ -193,12 +193,25 @@ const medianOf = (values: number[]): number => {
  * like a single track everywhere else in this file, so nothing downstream needs
  * to know the athlete was ever in pieces.
  */
-export const stitchFocal = (input: ScoringInput): TrackSeries | null => {
-  const ids = input.focalTrackIds ?? (input.focalTrackId === null ? [] : [input.focalTrackId]);
+export const stitchFocal = (input: ScoringInput): TrackSeries | null =>
+  stitchSeries(
+    input.tracks,
+    input.focalTrackIds ?? (input.focalTrackId === null ? [] : [input.focalTrackId]),
+  );
+
+/**
+ * The same stitch, over a bare list of tracks.
+ *
+ * Split out because the virtual cameraman needs it too and has no `ScoringInput`
+ * to hand. It followed `athlete.focal_track_id` alone — one fragment out of the
+ * dozen the same child is broken into — so `follow-player` framed him for the
+ * seconds that fragment covered and drifted for the rest of the clip.
+ */
+export const stitchSeries = (tracks: TrackSeries[], ids: string[]): TrackSeries | null => {
   if (ids.length === 0) return null;
 
   const wanted = new Set(ids);
-  const parts = input.tracks.filter((track) => wanted.has(track.id));
+  const parts = tracks.filter((track) => wanted.has(track.id));
   const first = parts[0];
   if (first === undefined) return null;
   if (parts.length === 1) return first;
@@ -685,9 +698,16 @@ const POSSESSION_FRACTION = 0.08;
 /**
  * How far past `fromTs` the play the athlete was running is still going.
  *
- * Deliberately narrow: it only fires when the athlete was *on the ball* as their
- * track ran out, and it only follows that same ball, so it extends a possession
- * and never a coincidence.
+ * Deliberately narrow at the front: it only fires when the athlete was *on the
+ * ball* as the run ended, so it extends a possession and never a coincidence.
+ *
+ * Once it has fired, the play is over when we can see neither the ball nor the
+ * child — not when we lose the first of them. Following the ball alone ended the
+ * clip on a detection dropout, and a basketball is about six pixels across once
+ * a 1080p frame becomes a 416x416 tensor: on the 61-minute game that prompted
+ * this, the detector emitted the ball as 4,067 separate fragments, so "the ball
+ * track ended" is overwhelmingly a fact about the detector rather than about the
+ * possession. A child still standing there holding it is the same play.
  */
 export const playTailEnd = (
   context: SignalContext,
@@ -702,7 +722,9 @@ export const playTailEnd = (
 
   let end = fromTs;
   for (let ts = fromTs + step; ts <= limitTs; ts += step) {
-    if (sampleAt(ball.track, ts) === null) break;
+    const ballLive = sampleAt(ball.track, ts) !== null;
+    const playerLive = focalAt(context, ts) !== null;
+    if (!ballLive && !playerLive) break;
     end = ts;
   }
   return end;
@@ -825,6 +847,14 @@ export const mergeOverlapping = (moments: ScoredMoment[]): ScoredMoment[] => {
  * length, so basketball's 15-second cap produced a 29-second clip from two legal
  * 15-second ones. That is the arithmetic behind a twenty-second tail on a reel of
  * five-second highlights.
+ *
+ * What it takes the length *out of* is the run-up, not the finish. Centring the
+ * window on the peak reads well for a scrappy passage and is exactly wrong for a
+ * possession, where the last second is the shot everybody stayed for: on the
+ * reported game it was the second cut, after `flush` had explicitly moved the
+ * start forward to protect it. So the finish is kept, and the start walks
+ * forward to meet it — stopping at the peak, because a window that has cut the
+ * peak is no longer the moment that scored.
  */
 export const capDuration = (
   moment: ScoredMoment,
@@ -832,11 +862,8 @@ export const capDuration = (
   durationSeconds: number,
 ): ScoredMoment => {
   if (maxDurationSeconds <= 0 || moment.end - moment.start <= maxDurationSeconds) return moment;
-  const half = maxDurationSeconds / 2;
-  const centre = moment.peakTs ?? (moment.start + moment.end) / 2;
-  const start = Math.max(
-    moment.start,
-    Math.min(centre - half, Math.max(0, moment.end - maxDurationSeconds)),
-  );
-  return { ...moment, start, end: Math.min(moment.end, durationSeconds, start + maxDurationSeconds) };
+  const finish = Math.min(moment.end, durationSeconds);
+  const latestStart = Math.max(0, finish - maxDurationSeconds);
+  const start = Math.max(moment.start, Math.min(moment.peakTs ?? latestStart, latestStart));
+  return { ...moment, start, end: Math.min(finish, start + maxDurationSeconds) };
 };
