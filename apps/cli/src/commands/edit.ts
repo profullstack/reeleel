@@ -6,13 +6,16 @@ import type { Command } from 'commander';
 import {
   ASPECT_RATIOS,
   CAMERA_MODES,
+  MUSIC_MOOD_NAMES,
   addClip,
   addClipsToReel,
   clipsFromMoments,
+  composeOrSkip,
   createReel,
   getClip,
   isAspectRatio,
   isCameraMode,
+  isMusicMood,
   listClips,
   listExports,
   listReels,
@@ -419,6 +422,8 @@ export const registerEditCommands = (program: Command): void => {
     .option('--output <file>', 'write to a specific path')
     .option('--label <text>', 'burn a name/number label into the corner')
     .option('--watermark', 'add a small ReelEel watermark', false)
+    .option('--music <mood>', `generate a backing track: ${MUSIC_MOOD_NAMES.join(', ')}`)
+    .option('--music-seed <n>', 'fix the generated track, so re-renders match', Number)
     .action(
       async function (
         this: Command,
@@ -431,6 +436,8 @@ export const registerEditCommands = (program: Command): void => {
           output?: string;
           label?: string;
           watermark: boolean;
+          music?: string;
+          musicSeed?: number;
         },
       ) {
         try {
@@ -445,13 +452,28 @@ export const registerEditCommands = (program: Command): void => {
             return;
           }
 
+          if (options.music !== undefined && !isMusicMood(options.music)) {
+            warn(`Unknown mood "${options.music}". Valid: ${MUSIC_MOOD_NAMES.join(', ')}`);
+            process.exitCode = 1;
+            return;
+          }
+
           const root = await projectRoot(this, ref);
+
+          // A missing track never stops the export — `composeOrSkip` reports
+          // why and returns null, and the reel renders without a bed.
+          const musicPath = await composeOrSkip(options.music, path.join(root, 'music'), {
+            ...(options.musicSeed === undefined ? {} : { seed: options.musicSeed }),
+            onSkip: (reason) => warn(reason),
+          });
+
           const result = await renderReel(root, options.reel, {
             ...(options.aspect === undefined ? {} : { aspect: options.aspect as AspectRatio }),
             ...(options.fps === undefined ? {} : { fps: options.fps }),
             quality: options.quality as 'low' | 'medium' | 'high',
             ...(options.output === undefined ? {} : { output: options.output }),
             ...(options.label === undefined ? {} : { label: options.label }),
+            ...(musicPath === null ? {} : { musicPath }),
             watermark: options.watermark,
             onProgress: (stage) => info(stage),
           });
