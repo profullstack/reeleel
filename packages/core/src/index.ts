@@ -26,6 +26,7 @@ export * from './projects.js';
 export * from './reels.js';
 export * from './commentary.js';
 export * from './render.js';
+export * from './music.js';
 export * from './voice.js';
 export * from './scoring.js';
 export * from './tracks.js';

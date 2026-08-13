@@ -27,6 +27,8 @@ export type ReelEelErrorCode =
   | 'RENDER_INTERRUPTED'
   /** Text-to-speech failed; the reel still renders without commentary. */
   | 'VOICE_FAILED'
+  /** Music generation failed; the reel still renders without a backing track. */
+  | 'MUSIC_FAILED'
   | 'UNSUPPORTED_OPERATION';
 
 export interface ReelEelErrorOptions {
