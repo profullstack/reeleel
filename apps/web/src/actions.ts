@@ -573,18 +573,36 @@ export const registerActions = (app: Hono): void => {
     try {
       const root = await rootOf(c);
       const videoId = c.req.query('videoId');
-      const candidates = await listAthleteCandidates(root, {
-        ...(videoId === undefined ? {} : { videoId }),
-      });
       const athletes = await listAthletes(root);
       // What the user already picked, so the grid reopens with it selected.
       const focalAthlete = athletes.find((athlete) => athlete.isFocal) ?? athletes[0];
       const assignedTrackIds =
         focalAthlete === undefined ? [] : await tracksForAthlete(root, focalAthlete.id);
+      /**
+       * Everything already picked gets a tile, whatever the grid's own limit
+       * and floor would have done with it. Reopening used to select thirty
+       * tracks and draw four of them, so the count came from nowhere the user
+       * could see and twenty-six choices could not be taken back.
+       */
+      const candidates = await listAthleteCandidates(root, {
+        include: assignedTrackIds,
+        ...(videoId === undefined ? {} : { videoId }),
+      });
+      /**
+       * Which upload each tile came from. Selections carry across videos — the
+       * same child is in the test clip and in the game — and without this the
+       * grid mixes two timelines with no way to tell them apart.
+       */
+      const videos = (await listVideos(root)).map((video, index) => ({
+        id: video.id,
+        label: path.basename(video.path),
+        order: index + 1,
+      }));
       return c.json({
         ok: true,
         candidates,
         assignedTrackIds,
+        videos,
         athletes: athletes.map((athlete) => ({
           id: athlete.id,
           name: athlete.name,
@@ -665,6 +683,10 @@ export const registerActions = (app: Hono): void => {
         ok: true,
         considered: found.considered,
         referenceTrackIds: found.referenceTrackIds,
+        // Which uploads were actually opened, so "nothing found" can be told
+        // apart from "the video you meant was never searched".
+        searchedVideoIds: found.searchedVideoIds ?? [],
+        skippedVideos: found.skippedVideos ?? [],
         proposals: found.proposals.flatMap((proposal) => {
           const preview = previews.get(proposal.trackId);
           return preview === undefined
@@ -696,6 +718,7 @@ export const registerActions = (app: Hono): void => {
         ? ((await c.req.json().catch(() => ({}))) as {
             trackId?: string;
             trackIds?: string[];
+            videoId?: string;
             name?: string;
             jerseyNumber?: string;
             team?: string;
@@ -812,7 +835,11 @@ export const registerActions = (app: Hono): void => {
       let added: string[] = [];
       if (body.expand === true) {
         try {
-          const found = await proposeAthleteTracks(root, athleteId, {});
+          const found = await proposeAthleteTracks(root, athleteId, {
+            ...(typeof body.videoId === 'string' && body.videoId.length > 0
+              ? { videoId: body.videoId }
+              : {}),
+          });
           added = found.proposals.map((proposal) => proposal.trackId);
           if (added.length > 0) {
             // The whole set, not the additions: assigning is a replace, and it

@@ -61,6 +61,10 @@ export const ReviewPage: FC<{
               id="review-surface"
               data-tracks={`${base}/videos/${video.id}/tracks`}
               data-bind={`${base}/athletes/new/track`}
+              /* Following one click through the game stays inside the footage
+                 under the cursor: widening across every upload is the picker's
+                 explicit button, not a side effect of pointing at a child. */
+              data-video={video.id}
               data-duration={String(video.probe?.durationSeconds ?? 0)}
               style="position:relative"
             >

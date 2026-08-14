@@ -42,7 +42,7 @@ export const JERSEY_COLOURS = [
   'silver',
 ] as const;
 
-interface Candidate {
+export interface Candidate {
   trackId: string;
   videoId: string;
   className: string;
@@ -57,10 +57,17 @@ interface Candidate {
 }
 
 /** Why the server thinks a fragment continues the athlete. */
-interface Match {
+export interface Match {
   score: number;
   gapSeconds: number;
   distancePx: number;
+}
+
+/** One upload, named so a crop from the test clip is not read as the game. */
+export interface VideoRef {
+  id: string;
+  label: string;
+  order: number;
 }
 
 interface Athlete {
@@ -120,9 +127,70 @@ const cropStyle = (candidate: Candidate, base: string): string => {
   ].join(';');
 };
 
+/**
+ * Proposals become tiles.
+ *
+ * A proposal the grid cannot draw is a number going up and nothing else. The
+ * grid shows the forty longest tracks; stitching works down to a quarter of a
+ * second, so most of what it finds was never on screen — the count moved, no
+ * new crop appeared, and the only honest reading was that the button did
+ * nothing. The server sends each proposal's preview for exactly this.
+ */
+export const withProposals = (
+  current: Candidate[],
+  proposals: (Candidate & Match)[],
+): Candidate[] => {
+  const known = new Set(current.map((candidate) => candidate.trackId));
+  const additions = proposals
+    .filter((proposal) => !known.has(proposal.trackId))
+    .map(({ score: _score, gapSeconds: _gap, distancePx: _px, ...candidate }) => candidate);
+  return additions.length === 0 ? current : [...current, ...additions];
+};
+
+/**
+ * How much of the game the current selection actually follows.
+ *
+ * Counted over everything picked, and it says so when some of it has no tile:
+ * this read "89s" beside "30 selected" because it silently summed only the four
+ * fragments the grid happened to be drawing, and the other twenty-six — from an
+ * earlier upload — were invisible to both numbers.
+ */
+export const coverageOf = (
+  candidates: Candidate[],
+  picked: string[],
+  videos: VideoRef[],
+): string => {
+  if (picked.length === 0) return 'Nothing selected yet.';
+
+  const chosen = candidates.filter((candidate) => picked.includes(candidate.trackId));
+  const seconds = chosen.reduce((sum, candidate) => sum + candidate.seconds, 0);
+  const withoutPreview = picked.length - chosen.length;
+
+  /** Where those seconds are, when there is more than one upload to confuse. */
+  const perVideo =
+    videos.length < 2
+      ? ''
+      : ` (${videos
+          .map((video) => ({
+            label: video.label,
+            seconds: chosen
+              .filter((candidate) => candidate.videoId === video.id)
+              .reduce((sum, candidate) => sum + candidate.seconds, 0),
+          }))
+          .filter((entry) => entry.seconds > 0)
+          .map((entry) => `${Math.round(entry.seconds)}s in ${entry.label}`)
+          .join(', ')})`;
+
+  return `${Math.round(seconds)}s of footage followed${perVideo}.${
+    withoutPreview > 0 ? ` ${withoutPreview} more selected with no preview frame.` : ''
+  }`;
+};
+
 const Identify = ({ base }: { base: string }) => {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [athletes, setAthletes] = useState<Athlete[]>([]);
+  /** The project's uploads, so a tile can say which one it came from. */
+  const [videos, setVideos] = useState<VideoRef[]>([]);
   const [athleteId, setAthleteId] = useState<string>('');
   /** Every fragment the user says is their athlete, not just the last clicked. */
   const [picked, setPicked] = useState<string[]>([]);
@@ -155,11 +223,13 @@ const Identify = ({ base }: { base: string }) => {
         candidates?: Candidate[];
         athletes?: Athlete[];
         assignedTrackIds?: string[];
+        videos?: VideoRef[];
         error?: string;
       };
       if (!response.ok || !body.ok) throw new Error(body.error ?? 'Could not load candidates.');
       setCandidates(body.candidates ?? []);
       setAthletes(body.athletes ?? []);
+      setVideos(body.videos ?? []);
       const focal = (body.athletes ?? []).find((a) => a.isFocal) ?? (body.athletes ?? [])[0];
       if (focal !== undefined) {
         setAthleteId(focal.id);
@@ -210,6 +280,8 @@ const Identify = ({ base }: { base: string }) => {
         ok: boolean;
         proposals?: (Candidate & Match)[];
         considered?: number;
+        searchedVideoIds?: string[];
+        skippedVideos?: { videoId: string; reason: string }[];
         error?: string;
       };
       if (!response.ok || !body.ok) throw new Error(body.error ?? 'Could not search the footage.');
@@ -223,14 +295,27 @@ const Identify = ({ base }: { base: string }) => {
           ]),
         ),
       );
+      setCandidates((current) => withProposals(current, proposals));
       setPicked((current) => [
         ...current,
         ...proposals.map((p) => p.trackId).filter((id) => !current.includes(id)),
       ]);
+      const searched = body.searchedVideoIds ?? [];
+      const skipped = body.skippedVideos ?? [];
+      const across =
+        videos.length > 1 && searched.length > 0
+          ? ` Searched ${searched.length} of ${videos.length} video(s) — a video is only searched where your athlete is already marked in it.`
+          : '';
+      const unread =
+        skipped.length === 0
+          ? ''
+          : ` ${skipped.length} video(s) could not be read: ${skipped.map((s) => s.reason).join('; ')}`;
       setFound(
-        proposals.length === 0
+        (proposals.length === 0
           ? `Nothing else followed on from where your athlete was, out of ${body.considered ?? 0} tracks checked. Pick any more you recognise by hand.`
-          : `Followed your athlete into ${proposals.length} more fragment(s), out of ${body.considered ?? 0} checked, and selected them. Each one carries on from where a fragment you already have left off, in a matching shirt — check them and untick anything that is not them.`,
+          : `Followed your athlete into ${proposals.length} more fragment(s), out of ${body.considered ?? 0} checked, and selected them. Each one carries on from where a fragment you already have left off, in a matching shirt — check them and untick anything that is not them.`) +
+          across +
+          unread,
       );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -282,14 +367,7 @@ const Identify = ({ base }: { base: string }) => {
 
   if (!loaded) return <p class="muted">Loading tracked players…</p>;
 
-  /** How much of the game the current selection actually follows. */
-  const chosenSeconds = candidates
-    .filter((candidate) => picked.includes(candidate.trackId))
-    .reduce((sum, candidate) => sum + candidate.seconds, 0);
-  const coverage =
-    picked.length === 0
-      ? 'Nothing selected yet.'
-      : `${Math.round(chosenSeconds)}s of footage followed.`;
+  const coverage = coverageOf(candidates, picked, videos);
 
   const bound = athletes.find((athlete) => athlete.focalTrackId !== null);
 
@@ -387,7 +465,8 @@ const Identify = ({ base }: { base: string }) => {
           {/* Tracking splits one child into several, so the same athlete shows
               up as several crops. Picking only one binds a fraction of them. */}
           <p class="muted">
-            {candidates.length} tracked player(s), longest on screen first. Click{' '}
+            {candidates.length} tracked player(s), longest on screen first — everything already
+            selected is shown here too, however short, so it can be taken back. Click{' '}
             <strong>every</strong> crop that is your athlete — the same child usually appears
             more than once, and each one you add is more of the game they are followed through.
           </p>
@@ -417,6 +496,11 @@ const Identify = ({ base }: { base: string }) => {
                     <span class="candidate-meta">
                       {clock(candidate.previewTs)} · {candidate.seconds}s
                       {match === undefined ? '' : ` · ${Math.round(match.score * 100)}%`}
+                      {/* Which upload this crop is from. Only shown when there
+                          is more than one, because otherwise it is noise. */}
+                      {videos.length < 2
+                        ? ''
+                        : ` · ${videos.find((video) => video.id === candidate.videoId)?.label ?? 'video'}`}
                     </span>
                   </button>
                 );

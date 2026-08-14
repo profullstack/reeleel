@@ -39,6 +39,13 @@ describe('the review surface', () => {
     expect(html).toContain('data-bind="/projects/prj_1/athletes/new/track"');
   });
 
+  it('names the footage on screen, so following a click stays inside it', async () => {
+    // Binding widens the pick into the fragments either side of it, and that
+    // search can now open every upload in the project. Pointing at a child in
+    // the game must not quietly add fragments of last week's clip.
+    expect(await render()).toContain('data-video="vid_1"');
+  });
+
   it('streams the footage rather than embedding a rendered debug copy', async () => {
     expect(await render()).toContain('/projects/prj_1/videos/vid_1/stream');
   });
