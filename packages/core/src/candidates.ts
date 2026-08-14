@@ -45,6 +45,17 @@ export interface CandidateOptions {
   minSeconds?: number;
   /** Most candidates to return, longest-lived first. Default 40. */
   limit?: number;
+  /**
+   * Tracks that must be returned whatever the limit and the floor say.
+   *
+   * The grid is both the picker and the only view of what is already picked, and
+   * those two jobs disagree: showing forty long tracks is right for choosing,
+   * and wrong for reviewing a selection the stitcher grew to thirty fragments,
+   * most of them under the 1.5s floor. Production had an athlete on 30 tracks
+   * with 4 tiles on screen — a count nobody could account for and 26 selections
+   * nobody could untick.
+   */
+  include?: readonly string[];
   /** Thumbnails generated per video; must match generateThumbnails. */
   thumbnailCount?: number;
 }
@@ -80,6 +91,7 @@ export const listAthleteCandidates = async (
   const minSeconds = options.minSeconds ?? 1.5;
   const limit = options.limit ?? 40;
   const thumbnailCount = options.thumbnailCount ?? 60;
+  const include = new Set(options.include ?? []);
 
   const videos = (await listVideos(root)).filter(
     (video) => options.videoId === undefined || video.id === options.videoId,
@@ -103,7 +115,7 @@ export const listAthleteCandidates = async (
       if (first === undefined || last === undefined) continue;
 
       const seconds = last.ts - first.ts;
-      if (seconds < minSeconds) continue;
+      if (seconds < minSeconds && !include.has(track.id)) continue;
 
       // The middle of the track is the most likely to show the athlete clearly:
       // the ends are where a tracker acquires and loses its target.
@@ -134,5 +146,15 @@ export const listAthleteCandidates = async (
     }
   }
 
-  return candidates.sort((a, b) => b.seconds - a.seconds).slice(0, limit);
+  /**
+   * The limit trims the choosing, never the chosen. A track the caller asked
+   * for is on screen even if a hundred longer ones exist, because the only way
+   * to unpick it is to see it.
+   */
+  const ordered = candidates.sort((a, b) => b.seconds - a.seconds);
+  const required = ordered.filter((candidate) => include.has(candidate.trackId));
+  // The limit is how many *unpicked* tracks are worth browsing, so a long
+  // selection does not eat the choice it is being compared against.
+  const rest = ordered.filter((candidate) => !include.has(candidate.trackId)).slice(0, limit);
+  return [...required, ...rest].sort((a, b) => b.seconds - a.seconds);
 };

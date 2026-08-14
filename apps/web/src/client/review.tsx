@@ -285,6 +285,11 @@ const attach = (node: HTMLElement): void => {
           // One click should mark the child everywhere they appear from here,
           // not only in the fragment under the cursor.
           expand: true,
+          // …everywhere in *this* video. Expansion used to be told nothing
+          // about which footage was on screen, and now that it can open every
+          // upload, saying so is what keeps a click on the game from quietly
+          // adding fragments of last week's clip.
+          ...(node.dataset['video'] === undefined ? {} : { videoId: node.dataset['video'] }),
           ...identity(),
         }),
       });

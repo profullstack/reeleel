@@ -9,6 +9,7 @@ import {
   chooseAthleteTracks,
   COLOUR_FLOOR,
   mergeSignatures,
+  reachableFrom,
   sampleBoxes,
 } from './stitch.js';
 import type { AthleteProposal } from './stitch.js';
@@ -31,6 +32,7 @@ import { listVideos } from './videos.js';
 export * from './stitch.js';
 
 export interface ProposalOptions {
+  /** Search only this video. Omitted means every video in the project. */
   videoId?: string;
   /**
    * Ignore candidates shorter than this. Deliberately far lower than the
@@ -45,9 +47,15 @@ export interface ProposalOptions {
   minSeconds?: number;
   /** Minimum agreement to accept a link at all. Default {@link COLOUR_FLOOR}. */
   threshold?: number;
-  /** Most proposals to return. Default 40. */
+  /** Most proposals to return per video. Default 40. */
   limit?: number;
   signal?: AbortSignal;
+}
+
+/** A video that could not be searched, and why. */
+export interface SkippedVideo {
+  videoId: string;
+  reason: string;
 }
 
 export interface ProposalResult {
@@ -56,6 +64,10 @@ export interface ProposalResult {
   referenceTrackIds: string[];
   /** How many tracks were compared, so "none found" can be told from "none tried". */
   considered: number;
+  /** Videos actually stitched — the ones the athlete is bound somewhere in. */
+  searchedVideoIds?: string[];
+  /** Videos the athlete is in that could not be read. */
+  skippedVideos?: SkippedVideo[];
 }
 
 interface WorkerSignatures {
@@ -77,28 +89,109 @@ export const proposeAthleteTracks = async (
 ): Promise<ProposalResult> => {
   const athlete = await getAthlete(root, athleteId);
   const videos = await listVideos(root);
-  const video =
-    options.videoId === undefined
-      ? videos[0]
-      : videos.find((candidate) => candidate.id === options.videoId);
-  if (video === undefined) {
+  if (videos.length === 0) {
     throw new ReelEelError('NOT_FOUND', 'This project has no video to search.');
   }
 
-  const series = await loadTrackSeries(root, video.id);
   const assigned = new Set(await tracksForAthlete(root, athlete.id));
   if (athlete.focalTrackId !== null) assigned.add(athlete.focalTrackId);
 
-  const reference = series.filter((track) => assigned.has(track.id));
-  if (reference.length === 0) {
+  /**
+   * Every video, not the first one.
+   *
+   * This searched `videos[0]` whenever the caller did not name a video, which
+   * is what the picker's "find them in the rest of the game" button does. A
+   * project with a second upload — the ordinary case, because the 300s test
+   * clip goes in before the hour-long game — searched the clip and reported
+   * nothing found, while the game it was asked about was never opened. Track
+   * timestamps are per-video, so each one is stitched on its own timeline and
+   * the results are concatenated.
+   */
+  const searchable =
+    options.videoId === undefined
+      ? videos
+      : videos.filter((candidate) => candidate.id === options.videoId);
+  if (searchable.length === 0) {
+    throw new ReelEelError('NOT_FOUND', 'This project has no video to search.');
+  }
+
+  const results: ProposalResult[] = [];
+  const searched: string[] = [];
+  const skipped: SkippedVideo[] = [];
+  for (const video of searchable) {
+    /**
+     * One unreadable video must not lose the others.
+     *
+     * A missing proxy on the first upload used to be the whole answer, because
+     * the first upload was the only thing searched. Now that every video is
+     * opened, a failure on one of them is a partial result, and saying which
+     * one failed is more use than failing the search the user asked for.
+     */
+    try {
+      const found = await proposeWithinVideo(root, athlete, video, assigned, options);
+      if (found === null) continue;
+      searched.push(video.id);
+      results.push(found);
+    } catch (cause) {
+      skipped.push({
+        videoId: video.id,
+        reason: cause instanceof Error ? cause.message : String(cause),
+      });
+    }
+  }
+
+  if (searched.length === 0 && skipped.length === 0) {
     throw new ReelEelError(
       'NOT_FOUND',
       `${athlete.name} is not bound to any track yet, so there is nothing to compare against.`,
       { hint: 'Identify them on one clip first, then search for the rest.' },
     );
   }
+  // Every video the athlete is in failed to open: that is the search failing,
+  // not a partial answer, so it is reported as one.
+  if (searched.length === 0) {
+    const first = skipped[0];
+    throw new ReelEelError('WORKER_CRASHED', first?.reason ?? 'Could not search the footage.');
+  }
 
-  const candidates = candidatesFrom(series, reference, assigned, options.minSeconds ?? 0.25);
+  return {
+    proposals: results.flatMap((result) => result.proposals),
+    referenceTrackIds: [...assigned],
+    considered: results.reduce((sum, result) => sum + result.considered, 0),
+    searchedVideoIds: searched,
+    skippedVideos: skipped,
+  };
+};
+
+/**
+ * One video's worth of stitching, or `null` when the athlete is not bound
+ * anywhere in it.
+ *
+ * Not being bound in a video is not an error — with several uploads it is the
+ * normal state of all but one of them. Only being bound in *none* of them is,
+ * and that is the caller's judgement to make.
+ */
+const proposeWithinVideo = async (
+  root: string,
+  athlete: Awaited<ReturnType<typeof getAthlete>>,
+  video: Awaited<ReturnType<typeof listVideos>>[number],
+  assigned: ReadonlySet<string>,
+  options: ProposalOptions,
+): Promise<ProposalResult | null> => {
+  const series = await loadTrackSeries(root, video.id);
+
+  const reference = series.filter((track) => assigned.has(track.id));
+  if (reference.length === 0) return null;
+
+  const eligible = candidatesFrom(series, reference, assigned, options.minSeconds ?? 0.25);
+  const frameWidth = video.probe?.video?.width ?? 1920;
+  /**
+   * Continuity first, colour second. Reading a shirt costs a seek and a crop
+   * on an hour-long proxy; deciding that no chain of links reaches the track
+   * costs arithmetic on two timestamps, and it is the same hard gate either
+   * way.
+   */
+  const candidates = reachableFrom(reference, eligible, frameWidth, options.limit ?? 40);
   if (candidates.length === 0) {
     return { proposals: [], referenceTrackIds: [...assigned], considered: 0 };
   }
@@ -110,7 +203,6 @@ export const proposeAthleteTracks = async (
     });
   }
 
-  const frameWidth = video.probe?.video?.width ?? 1920;
   const boxes = [...reference, ...candidates].flatMap((track) =>
     sampleBoxes(track).map((box) => ({ track: track.id, ...box })),
   );

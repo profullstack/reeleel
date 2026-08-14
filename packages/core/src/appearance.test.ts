@@ -6,6 +6,8 @@ import {
   linkBetween,
   mergeSignatures,
   overlapsInTime,
+  REACH_CAP,
+  reachableFrom,
   sampleBoxes,
   similarity,
   spanOf,
@@ -213,5 +215,54 @@ describe('linking one fragment to the next', () => {
     const narrow = linkBetween(at('known', 10, 20, 500), at('next', 20.5, 25, 900), 640);
     expect(wide).not.toBeNull();
     expect(narrow).toBeNull();
+  });
+});
+
+/**
+ * Colour is the expensive half.
+ *
+ * Every candidate costs the worker a seek and a crop on the proxy. That was
+ * affordable while this searched one 300s clip and never opened the game;
+ * pointing it at a 62-minute upload with 21,000 tracks means tens of thousands
+ * of crops for an answer continuity had already decided. Reachability is that
+ * answer, computed on timestamps alone.
+ */
+describe('what a chain of links can reach', () => {
+  it('grows one hop at a time, as acceptance does', () => {
+    // c only continues b, and b only continues a. A single pass from the
+    // reference would find b and stop, and c is the rest of the game.
+    const reached = reachableFrom([track('a', 0, 5)], [track('c', 12, 17), track('b', 6, 11)], 1920);
+    expect(reached.map((entry) => entry.id).sort()).toEqual(['b', 'c']);
+  });
+
+  it('never reaches a track no gap could bridge', () => {
+    // 40s of silence: MAX_LINK_SECONDS is 6, so nothing links, however alike
+    // the two shirts are.
+    expect(reachableFrom([track('a', 0, 5)], [track('far', 45, 50)], 1920)).toEqual([]);
+  });
+
+  it('leaves the rest of an hour of footage unmeasured', () => {
+    // The shape of the real project: a handful of fragments around the athlete
+    // and thousands of strangers elsewhere in the game.
+    const near = [track('n1', 6, 11), track('n2', 12, 17)];
+    const strangers = Array.from({ length: 2_000 }, (_unused, i) =>
+      track(`s${i}`, 200 + i * 20, 210 + i * 20),
+    );
+    const reached = reachableFrom([track('a', 0, 5)], [...near, ...strangers], 1920);
+    expect(reached.map((entry) => entry.id).sort()).toEqual(['n1', 'n2']);
+  });
+
+  it('stops at the cap rather than sending the worker everything', () => {
+    // Footage where everyone is always in reach of everyone — a tight scrum,
+    // or a tracker shattering one child into hundreds of fragments — degrades
+    // to a slow search, not an impossible one.
+    const dense = Array.from({ length: REACH_CAP * 2 }, (_unused, i) => track(`d${i}`, 6, 11));
+    expect(reachableFrom([track('a', 0, 5)], dense, 1920).length).toBeLessThanOrEqual(REACH_CAP);
+  });
+
+  it('cannot reach further than the fragments it could accept', () => {
+    // One hop per acceptance: a limit of two cannot end up with a fourth link.
+    const links = [track('b', 6, 11), track('c', 12, 17), track('d', 18, 23)];
+    expect(reachableFrom([track('a', 0, 5)], links, 1920, 2)).toHaveLength(2);
   });
 });

@@ -427,3 +427,53 @@ export const candidatesFrom = (
     if (end - start < minSeconds) return false;
     return !reference.some((known) => overlapsInTime(known, track));
   });
+
+/** Most tracks a single search will measure the colour of. */
+export const REACH_CAP = 480;
+
+/**
+ * The tracks a chain of links could ever arrive at, and only those.
+ *
+ * Colour is the expensive half: every candidate costs the worker a seek and a
+ * crop, on a proxy that can be an hour long. Continuity is free, and it is a
+ * hard gate — {@link chooseAthleteTracks} accepts nothing that does not carry
+ * on from something already chosen, so a track no chain of links can reach is
+ * measured only to be discarded.
+ *
+ * That was affordable while this searched one 300s clip. On a 62-minute game
+ * with 21,000 tracks it is 70,000 crops for an answer that is decided by
+ * arithmetic on timestamps, so the walk happens first.
+ *
+ * Widened one hop at a time because reachability compounds exactly as
+ * acceptance does: a fragment that continues the athlete's *new* last track was
+ * not adjacent to anything before that one was reached. Bounded by hops, since
+ * no more than `limit` fragments can be accepted, and by {@link REACH_CAP}, so
+ * that footage where everyone is always in reach of everyone degrades to a
+ * slow search rather than an impossible one.
+ */
+export const reachableFrom = (
+  reference: TrackSeries[],
+  candidates: TrackSeries[],
+  frameWidth: number,
+  limit = 40,
+  cap = REACH_CAP,
+): TrackSeries[] => {
+  const remaining = new Set(candidates);
+  const reached: TrackSeries[] = [];
+  let frontier = reference;
+
+  for (let hop = 0; hop < limit && frontier.length > 0 && reached.length < cap; hop += 1) {
+    const next: TrackSeries[] = [];
+    for (const track of remaining) {
+      if (frontier.some((known) => linkBetween(known, track, frameWidth) !== null)) {
+        next.push(track);
+        remaining.delete(track);
+        if (reached.length + next.length >= cap) break;
+      }
+    }
+    reached.push(...next);
+    frontier = next;
+  }
+
+  return reached;
+};
