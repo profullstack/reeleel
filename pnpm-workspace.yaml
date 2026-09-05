@@ -17,3 +17,6 @@ allowBuilds:
   # Its postinstall fetches the native onnxruntime binaries; without it the
   # detector cannot load a model.
   onnxruntime-node: true
+
+minimumReleaseAgeExclude:
+  - '@profullstack/x402-gateway@0.1.0'

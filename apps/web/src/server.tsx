@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
+import { createGateway } from '@profullstack/x402-gateway';
+import { x402Gateway } from '@profullstack/x402-gateway/hono';
 import type { Context } from 'hono';
 
 import {
@@ -89,8 +91,24 @@ const field = (body: Record<string, unknown>, name: string): string => {
   return typeof value === 'string' ? value : '';
 };
 
+/**
+ * Training crawlers (GPTBot, ClaudeBot, CCBot, meta-externalagent, Bytespider,
+ * Applebot-Extended) pay by the day over x402 (@profullstack/x402-gateway).
+ * People, search engines and retrieval crawlers pass through untouched. Without
+ * COINPAY_X402_KEY and CRAWL_PAY_TO they still get 402, with an empty offer.
+ */
+const crawlGateway = createGateway({
+  siteUrl: process.env.SITE_URL ?? 'https://reeleel.com',
+  siteName: 'reeleel',
+  coinpay: { apiKey: process.env.COINPAY_X402_KEY },
+  payTo: process.env.CRAWL_PAY_TO,
+  contact: 'mailto:anthony@profullstack.com',
+});
+
 export const createWebApp = (): Hono => {
   const app = new Hono();
+  app.use('*', x402Gateway(crawlGateway));
+  app.get('/robots.txt', (c) => c.text(crawlGateway.robotsTxt({ disallow: ['/api/'] })));
   const auth = readAuthConfig();
   const email = readEmailConfig();
   const mailer = createMailer(email);
