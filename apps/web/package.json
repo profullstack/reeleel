@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
+    "@profullstack/x402-gateway": "^0.1.0",
     "@reeleel/api": "workspace:*",
     "@reeleel/core": "workspace:*",
     "hono": "^4.6.14"
