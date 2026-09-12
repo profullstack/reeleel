@@ -1,0 +1,29 @@
+{
+  "openaccess": "0.1",
+  "name": "reeleel",
+  "url": "https://reeleel.com",
+  "operator": "https://logicsrc.com/.well-known/openprofile.md",
+  "redirect_uris": [
+    "https://reeleel.com/api/v1/openaccess/callback"
+  ],
+  "jwks": {
+    "keys": [
+      {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "kid": "Iwav40fsLv4k",
+        "x": "6rprFPMxnf5f8gYD4nIeLU9yqnEUTvl7HDW69MxjBJo",
+        "alg": "EdDSA",
+        "use": "sig"
+      }
+    ]
+  },
+  "scopes": {},
+  "honours": [
+    "profullstack.com/all-access"
+  ],
+  "webhooks": "https://reeleel.com/api/v1/openaccess/events",
+  "hubs": [
+    "https://openaccess.logicsrc.com"
+  ]
+}

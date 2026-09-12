@@ -185,6 +185,17 @@ export const createWebApp = (): Hono => {
 
   // ── Installable app shell (public: needed before sign-in) ─────────────────
 
+  // The OpenAccess descriptor (https://logicsrc.com/openaccess): how a client
+  // links this app over OAuth 2.1 + PKCE. Read by the catalog, so public.
+  app.get('/.well-known/openaccess.json', (c) => {
+    const onDisk = path.join(publicDir, '.well-known', 'openaccess.json');
+    if (!existsSync(onDisk)) return c.notFound();
+    return c.body(readFileSync(onDisk), 200, {
+      'content-type': 'application/json',
+      'cache-control': 'public, max-age=300',
+    });
+  });
+
   app.get('/manifest.webmanifest', (c) =>
     c.json(MANIFEST, 200, { 'cache-control': 'public, max-age=3600' }),
   );
