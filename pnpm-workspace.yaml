@@ -20,3 +20,4 @@ allowBuilds:
 
 minimumReleaseAgeExclude:
   - '@profullstack/x402-gateway@0.1.0'
+  - @profullstack/keys
