@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { createFileClient } from './client.js';
+import { createFileClient, createGlobalClient } from './client.js';
 import { listMigrationFiles, migrate, migrationStatus } from './migrate.js';
 import type { Client } from './client.js';
 
@@ -82,5 +82,33 @@ describe('migrations', () => {
     await migrate(db, 'global');
     const result = await db.execute('SELECT name FROM schema_migrations');
     expect(result.rows.map((row) => String(row['name']))).toEqual(listMigrationFiles('global'));
+  });
+});
+
+// The Postgres rendering of the global scope. Needs a database, so it runs only
+// when TEST_DATABASE_URL is set (CI has none); the schema is left in place.
+const PG_URL = process.env['TEST_DATABASE_URL'];
+
+describe.skipIf(PG_URL === undefined)('global migrations on Postgres', () => {
+  it('ships a Postgres file for every global SQLite migration', () => {
+    expect(listMigrationFiles('global', 'postgres')).toEqual(listMigrationFiles('global'));
+  });
+
+  it('applies, is idempotent, and refuses the project scope', async () => {
+    const pg = createGlobalClient('/tmp/unused.db', { databaseUrl: PG_URL });
+    try {
+      await migrate(pg, 'global');
+      expect(await migrate(pg, 'global')).toEqual([]);
+      expect((await migrationStatus(pg, 'global')).pending).toEqual([]);
+      const tables = await pg.execute(
+        "SELECT table_name AS name FROM information_schema.tables WHERE table_schema = current_schema()",
+      );
+      const names = tables.rows.map((row) => String(row['name']));
+      expect(names).toContain('registered_projects');
+      expect(names).toContain('users');
+      await expect(migrate(pg, 'project')).rejects.toThrow(/local libSQL files/);
+    } finally {
+      pg.close();
+    }
   });
 });

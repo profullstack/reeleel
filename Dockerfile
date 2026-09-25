@@ -65,7 +65,7 @@ RUN pnpm install --frozen-lockfile --prod \
 FROM node:22-slim AS runner
 
 # ffmpeg provides both ffmpeg and ffprobe, which is what `reeleel doctor` looks
-# for. ca-certificates is needed for Turso over TLS. gosu lets the entrypoint
+# for. ca-certificates is needed for Postgres over TLS. gosu lets the entrypoint
 # fix volume ownership as root and then drop to an unprivileged user.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ffmpeg ca-certificates gosu \

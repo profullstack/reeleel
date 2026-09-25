@@ -22,7 +22,7 @@ export {
   toNumber,
 } from '@reeleel/db';
 export type { Client, InValue, ResultSet, Row } from '@reeleel/db';
-export { DbConfigError, migrationStatus, readDbEnv } from '@reeleel/db';
+export { DbConfigError, assertDatabaseConfigured, isPostgresClient, migrationStatus, postgresUrl, readDbEnv } from '@reeleel/db';
 
 /**
  * Clients are cached per database because opening one runs migrations, and a

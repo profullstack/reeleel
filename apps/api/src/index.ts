@@ -1,5 +1,7 @@
 import { serve } from '@hono/node-server';
 
+import { DbConfigError, assertDatabaseConfigured } from '@reeleel/core';
+
 import { createApp } from './app.js';
 import { AuthConfigError, assertAuthConfigured, isAuthEnabled } from './auth.js';
 
@@ -10,8 +12,11 @@ const hostname = process.env['HOST'] ?? '127.0.0.1';
 
 try {
   assertAuthConfigured(hostname);
+  // A hosted deployment keeps its registry and accounts in Postgres; a local
+  // file is only for loopback.
+  assertDatabaseConfigured(hostname);
 } catch (error) {
-  if (error instanceof AuthConfigError) {
+  if (error instanceof AuthConfigError || error instanceof DbConfigError) {
     process.stderr.write(`${error.message}\n`);
     process.exit(1);
   }

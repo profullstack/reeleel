@@ -254,10 +254,12 @@ export const resolveProjectRoot = async (
   const params =
     scope === undefined ? [reference, reference] : [reference, reference, scope.ownerId];
 
+  // lower() = lower() rather than COLLATE NOCASE: the registry may be Postgres,
+  // which has no NOCASE collation, and lower() reads the same on both.
   const match = await get<{ root: string }>(
     db,
     `SELECT root FROM registered_projects
-     WHERE (id = ? OR name = ? COLLATE NOCASE) ${clauses}
+     WHERE (id = ? OR lower(name) = lower(?)) ${clauses}
      ORDER BY last_opened_at DESC LIMIT 1`,
     params,
   );
