@@ -90,7 +90,7 @@ apps/
   desktop/    @reeleel/desktop  native shell (scaffold, phase 9)
 packages/
   core/       @reeleel/core     project model, storage, FFmpeg, jobs, scoring, datasets
-  db/         @reeleel/db       libSQL/Turso clients + forward-only SQL migrations
+  db/         @reeleel/db       libSQL (projects) + Postgres (registry) clients, SQL migrations
   sports/     @reeleel/sports   sport plugins (soccer ships today)
 workers/
   cv/         reeleel-cv        Python detection/tracking worker (contract only)
@@ -120,23 +120,30 @@ my-game/
 Copy the folder and everything travels with it. `reeleel project import <dir>`
 registers it on another machine.
 
-## Storage: local first, Turso optional
+## Storage: local first, Postgres for the registry
 
 Project databases are always **local libSQL files**. Syncing a family's game
 metadata to the cloud has to be a deliberate choice, never a default.
 
 Only the machine-wide registry (which projects and models this install knows
-about) can point at Turso:
+about, plus the accounts of a hosted deployment) can live on a server, in
+Postgres through [`@profullstack/libsql-pg`](https://github.com/profullstack/libsql-pg):
 
 ```bash
-export REELEEL_DB_URL=libsql://your-db.turso.io
-export REELEEL_DB_AUTH_TOKEN=...
-pnpm db:migrate
+export DATABASE_URL=postgres://user:pass@host:5432/reeleel
+pnpm db:migrate            # applies packages/db/migrations-pg/global
 ```
 
-With a remote URL set, ReelEel uses an **embedded replica** — reads stay local
-and offline-safe, writes push through when there is a connection. With no URL
-set, it is a plain local file and nothing touches the network.
+With no `DATABASE_URL` the registry is a plain local file and nothing touches
+the network. A server listening on a non-loopback host refuses to start
+without it, and anything other than a `postgres://` URL is refused rather than
+falling back to a file. The old Turso setting (`REELEEL_DB_URL`) is refused
+with the copy recipe:
+
+```bash
+npx libsql-pg copy --from "$REELEEL_DB_URL" --token "$REELEEL_DB_AUTH_TOKEN" \
+  --to "$DATABASE_URL" --verify
+```
 
 Migrations are forward-only `.sql` files under `packages/db/migrations/`,
 tracked in a `schema_migrations` table:
@@ -181,9 +188,9 @@ Notes on the image:
   there, so they survive a redeploy. Without a mounted volume the container
   filesystem is ephemeral and everything resets.
 
-**Persistence.** Mount a volume at `/data`, and set `REELEEL_DB_URL` /
-`REELEEL_DB_AUTH_TOKEN` so the machine registry lives in Turso rather than on
-the container disk.
+**Persistence.** Mount a volume at `/data`, and set `DATABASE_URL` so the
+machine registry (and accounts) live in Postgres rather than on the container
+disk. The container binds 0.0.0.0, so it refuses to start without it.
 
 ## Accounts and authentication
 

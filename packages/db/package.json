@@ -2,7 +2,7 @@
   "name": "@reeleel/db",
   "version": "0.3.0",
   "type": "module",
-  "description": "Turso/libSQL clients and forward-only migrations for ReelEel. Local file by default, Turso when configured.",
+  "description": "Database clients and forward-only migrations for ReelEel. Project databases are local libSQL files; the machine registry is Postgres when DATABASE_URL is set.",
   "license": "MIT",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -12,7 +12,11 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist", "migrations"],
+  "files": [
+    "dist",
+    "migrations",
+    "migrations-pg"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -24,7 +28,8 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@libsql/client": "^0.17.4"
+    "@libsql/client": "^0.17.4",
+    "@profullstack/libsql-pg": "^0.1.1"
   },
   "devDependencies": {
     "@types/node": "^25.0.6",

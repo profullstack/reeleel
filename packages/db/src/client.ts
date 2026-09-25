@@ -1,34 +1,32 @@
 import { createClient } from '@libsql/client';
 import type { Client, InValue, ResultSet, Row } from '@libsql/client';
+import { createClient as createPostgresClient } from '@profullstack/libsql-pg';
 
 /**
- * ReelEel is local-first, so the default for both project data and the machine
- * registry is a plain local libSQL file — no network, no account, works on a
- * plane. Turso enters only when the user opts in by setting REELEEL_DB_URL, and
- * even then a project database stays local: syncing a family's game footage
- * metadata to the cloud has to be a deliberate choice, not a default.
+ * ReelEel is local-first, so a project database is a plain local libSQL file:
+ * no network, no account, works on a plane, and the project folder stays
+ * portable. That does not change.
+ *
+ * The machine-wide registry (projects, models, and the accounts of a hosted
+ * deployment) is the one database that can live on a server. It used to point
+ * at Turso through an embedded replica; it now points at Postgres through
+ * @profullstack/libsql-pg, which keeps the @libsql/client surface every helper
+ * below uses and rewrites the remaining SQLite idioms per statement. With no
+ * DATABASE_URL the registry is a local file, as before.
  */
 export interface DbEnv {
-  /** Remote Turso URL (`libsql://…`). Local `file:` URLs are accepted too. */
-  url?: string | undefined;
-  authToken?: string | undefined;
-  /** Local file backing an embedded replica when `url` is remote. */
-  replicaPath?: string | undefined;
-  syncIntervalSeconds?: number | undefined;
+  /** Postgres URL for the machine registry (`postgres://…`). */
+  databaseUrl?: string | undefined;
+  /** The retired Turso setting, read only so it can be refused with a clear message. */
+  legacyUrl?: string | undefined;
 }
 
 export const readDbEnv = (env: NodeJS.ProcessEnv = process.env): DbEnv => ({
-  url: env['REELEEL_DB_URL'],
-  authToken: env['REELEEL_DB_AUTH_TOKEN'],
-  replicaPath: env['REELEEL_DB_REPLICA_PATH'],
-  syncIntervalSeconds:
-    env['REELEEL_DB_SYNC_INTERVAL'] === undefined
-      ? undefined
-      : Number(env['REELEEL_DB_SYNC_INTERVAL']),
+  databaseUrl: env['DATABASE_URL'],
+  legacyUrl: env['REELEEL_DB_URL'],
 });
 
-const isRemote = (url: string): boolean =>
-  url.startsWith('libsql://') || url.startsWith('https://') || url.startsWith('wss://');
+const POSTGRES_URL = /^postgres(ql)?:\/\//i;
 
 export class DbConfigError extends Error {
   constructor(message: string) {
@@ -41,51 +39,64 @@ export class DbConfigError extends Error {
 export const createFileClient = (filePath: string): Client =>
   createClient({ url: `file:${filePath.replace(/^file:/, '')}` });
 
+/** True when a client talks to Postgres (the registry) rather than a local file. */
+export const isPostgresClient = (client: Client): boolean => client.protocol === 'postgres';
+
 /**
- * Where an embedded replica is stored.
+ * The registry's Postgres URL, or undefined when the registry is a local file.
  *
- * Deliberately NOT the same file as the local-only database. libSQL keeps
- * sidecar metadata beside a replica, so handing it a plain database written in
- * local-only mode fails with:
- *
- *   Sync(InvalidLocalState("db file exists but metadata file does not"))
- *
- * Any machine that starts local and later adopts Turso would hit that, so the
- * two modes get separate files.
+ * Fails fast rather than falling back: a DATABASE_URL that is not postgres://
+ * or a leftover REELEEL_DB_URL is a misconfigured deployment, and writing the
+ * registry to a file on a server disk would look like it worked.
  */
-export const defaultReplicaPath = (localPath: string): string => {
-  const bare = localPath.replace(/^file:/, '');
-  return bare.endsWith('.db') ? `${bare.slice(0, -3)}-replica.db` : `${bare}-replica.db`;
+export const postgresUrl = (env: DbEnv = readDbEnv()): string | undefined => {
+  if (env.legacyUrl !== undefined && env.legacyUrl.length > 0) {
+    throw new DbConfigError(
+      'REELEEL_DB_URL is no longer read: the machine registry moved from Turso to Postgres. ' +
+        'Copy the data with `npx libsql-pg copy --from "$REELEEL_DB_URL" --token "$REELEEL_DB_AUTH_TOKEN" --to "$DATABASE_URL" --verify`, ' +
+        'set DATABASE_URL to the postgres:// URL and unset REELEEL_DB_URL.',
+    );
+  }
+  const url = env.databaseUrl;
+  if (url === undefined || url.length === 0) return undefined;
+  if (!POSTGRES_URL.test(url)) {
+    throw new DbConfigError(
+      `DATABASE_URL must be a postgres:// or postgresql:// URL, got "${url.split(':')[0]}:". ` +
+        'The registry runs on Postgres or, with DATABASE_URL unset, a local file; libsql:// and file: URLs are not accepted here.',
+    );
+  }
+  return url;
 };
 
 /**
- * The machine-wide database. Local file unless REELEEL_DB_URL points at Turso,
- * in which case we use an embedded replica so reads stay local and offline-safe
- * and writes push through when there is a connection.
+ * The machine-wide database: Postgres when DATABASE_URL is set, otherwise a
+ * local file.
+ *
+ * The Postgres client is typed as the libSQL `Client` on purpose: it has the
+ * same execute / executeMultiple / close surface, and every helper and call
+ * site was written against that type.
  */
 export const createGlobalClient = (localFallbackPath: string, env: DbEnv = readDbEnv()): Client => {
-  const url = env.url;
-  if (url === undefined || url.length === 0) return createFileClient(localFallbackPath);
+  const url = postgresUrl(env);
+  if (url === undefined) return createFileClient(localFallbackPath);
+  return createPostgresClient({ url }) as unknown as Client;
+};
 
-  if (!isRemote(url)) {
-    return createClient({ url: url.startsWith('file:') ? url : `file:${url}` });
-  }
-
-  if (env.authToken === undefined || env.authToken.length === 0) {
-    throw new DbConfigError(
-      'REELEEL_DB_URL points at a remote database but REELEEL_DB_AUTH_TOKEN is not set.',
-    );
-  }
-
-  const replica = env.replicaPath ?? defaultReplicaPath(localFallbackPath);
-  return createClient({
-    url: `file:${replica.replace(/^file:/, '')}`,
-    syncUrl: url,
-    authToken: env.authToken,
-    ...(env.syncIntervalSeconds === undefined || !Number.isFinite(env.syncIntervalSeconds)
-      ? {}
-      : { syncInterval: env.syncIntervalSeconds }),
-  });
+/**
+ * Fail-closed guard for server entry points. A hosted deployment (listening on
+ * a non-loopback interface) must keep its registry in Postgres: a file on the
+ * container disk vanishes with the container, and accounts live in it.
+ * Loopback (someone's own machine) may still use the local file.
+ */
+export const assertDatabaseConfigured = (host: string, env: DbEnv = readDbEnv()): void => {
+  const url = postgresUrl(env);
+  if (url !== undefined) return;
+  if (/^(127\.0\.0\.1|::1|localhost)$/.test(host)) return;
+  throw new DbConfigError(
+    `Refusing to listen on ${host} without DATABASE_URL.\n` +
+      'A hosted ReelEel keeps its registry and accounts in Postgres; set DATABASE_URL=postgres://...\n' +
+      'Or bind to loopback (HOST=127.0.0.1) to run it only on this machine with a local registry file.',
+  );
 };
 
 export type { Client, ResultSet, Row, InValue };

@@ -34,13 +34,17 @@ export * from './types.js';
 export * from './videos.js';
 
 export {
+  DbConfigError,
   all,
+  assertDatabaseConfigured,
   changes,
   closeDatabases,
   execute,
   get,
   globalDb,
+  isPostgresClient,
   parseJson,
+  postgresUrl,
   projectDb,
   resetDbCache,
   toNumber,

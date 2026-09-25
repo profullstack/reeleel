@@ -2,7 +2,9 @@ import { serve } from '@hono/node-server';
 
 import { AuthConfigError, assertAuthConfigured, isAuthEnabled } from '@reeleel/api';
 import {
+  DbConfigError,
   analyzeProject,
+  assertDatabaseConfigured,
   failInterruptedJobs,
   interruptedDetections,
   listProjects,
@@ -32,11 +34,13 @@ const requestTimeout = Number(process.env['REELEEL_REQUEST_TIMEOUT_SECONDS'] ?? 
 // Headers arrive immediately or not at all; keep that guard tight.
 const headersTimeout = Number(process.env['REELEEL_HEADERS_TIMEOUT_SECONDS'] ?? 60) * 1000;
 
-// Fail closed: never listen on a public interface without a token.
+// Fail closed: never listen on a public interface without a token, and never
+// with the registry (which holds the accounts) on the container disk.
 try {
   assertAuthConfigured(hostname);
+  assertDatabaseConfigured(hostname);
 } catch (error) {
-  if (error instanceof AuthConfigError) {
+  if (error instanceof AuthConfigError || error instanceof DbConfigError) {
     process.stderr.write(`${error.message}\n`);
     process.exit(1);
   }
