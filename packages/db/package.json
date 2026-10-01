@@ -20,8 +20,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "migrate": "node ../../scripts/db-migrate.mjs",
-    "migrate:status": "node ../../scripts/db-migrate.mjs --status",
+    "migrate": "bun ../../scripts/db-migrate.mjs",
+    "migrate:status": "bun ../../scripts/db-migrate.mjs --status",
     "test": "vitest run --root ."
   },
   "engines": {

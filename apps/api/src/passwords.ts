@@ -13,7 +13,9 @@ const scrypt = (
 ): Promise<Buffer> =>
   new Promise((resolve, reject) => {
     scryptCallback(password, salt, keyLength, options, (error, derived) => {
-      if (error !== null) reject(error);
+      // Node passes `null` on success, Bun passes `undefined`: test truthiness,
+      // or every hash rejects with `undefined` under Bun and no one can log in.
+      if (error) reject(error);
       else resolve(derived);
     });
   });

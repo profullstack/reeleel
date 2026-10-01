@@ -4,20 +4,22 @@
 # Platform volumes (Railway, Fly, plain `docker run -v`) mount root-owned and
 # empty. A container that started as an unprivileged user could not create
 # anything inside them, so ReelEel would crash on its first write. Start as
-# root, take ownership of the data directory, then hand off to `node`.
+# root, take ownership of the data directory, then hand off to the
+# unprivileged `bun` user (uid 1000).
 set -e
 
 DATA_DIR="${REELEEL_HOME:-/data}"
 PROJECTS_DIR="${REELEEL_PROJECTS_DIR:-$DATA_DIR/projects}"
+APP_USER="${REELEEL_APP_USER:-bun}"
 
 if [ "$(id -u)" = "0" ]; then
   mkdir -p "$DATA_DIR" "$PROJECTS_DIR"
   # Only touch ownership when it is wrong, so a large existing volume does not
   # pay a recursive chown on every boot.
-  if [ "$(stat -c '%u' "$DATA_DIR")" != "$(id -u node)" ]; then
-    chown -R node:node "$DATA_DIR"
+  if [ "$(stat -c '%u' "$DATA_DIR")" != "$(id -u "$APP_USER")" ]; then
+    chown -R "$APP_USER:$APP_USER" "$DATA_DIR"
   fi
-  exec gosu node "$@"
+  exec gosu "$APP_USER" "$@"
 fi
 
 # Already unprivileged (someone passed --user): run as-is.

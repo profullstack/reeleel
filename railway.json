@@ -11,8 +11,7 @@
       "Dockerfile",
       "docker-entrypoint.sh",
       "package.json",
-      "pnpm-lock.yaml",
-      "pnpm-workspace.yaml",
+      "bun.lock",
       "railway.json"
     ]
   },

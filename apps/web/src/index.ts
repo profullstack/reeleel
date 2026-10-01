@@ -120,6 +120,16 @@ void (async () => {
   }
 })();
 
+/**
+ * In the container this process is PID 1, and PID 1 ignores SIGTERM unless it
+ * installs a handler, so every `docker stop` (every deploy) waited out the 10 s
+ * grace period for SIGKILL. Exit at once instead: nothing here needs flushing,
+ * and work in flight is already recovered on the next start (see above).
+ */
+for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+  process.once(signal, () => process.exit(0));
+}
+
 serve(
   {
     fetch: createWebApp().fetch,
