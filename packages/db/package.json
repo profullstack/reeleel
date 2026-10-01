@@ -1,6 +1,6 @@
 {
   "name": "@reeleel/db",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "description": "Database clients and forward-only migrations for ReelEel. Project databases are local libSQL files; the machine registry is Postgres when DATABASE_URL is set.",
   "license": "MIT",

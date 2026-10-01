@@ -19,7 +19,7 @@
     },
     "apps/api": {
       "name": "@reeleel/api",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "dependencies": {
         "@hono/node-server": "^1.13.7",
         "@reeleel/core": "workspace:*",
@@ -35,7 +35,7 @@
     },
     "apps/cli": {
       "name": "@reeleel/cli",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "bin": {
         "reeleel": "./dist/index.js",
       },
@@ -54,7 +54,7 @@
     },
     "apps/cv-worker": {
       "name": "@reeleel/cv-worker",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "bin": {
         "reeleel-cv": "./dist/index.js",
       },
@@ -71,7 +71,7 @@
     },
     "apps/desktop": {
       "name": "@reeleel/desktop",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "dependencies": {
         "@reeleel/api": "workspace:*",
         "@reeleel/core": "workspace:*",
@@ -80,7 +80,7 @@
     },
     "apps/web": {
       "name": "@reeleel/web",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "dependencies": {
         "@hono/node-server": "^1.13.7",
         "@profullstack/x402-gateway": "^0.7.0",
@@ -98,7 +98,7 @@
     },
     "packages/client": {
       "name": "@reeleel/client",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "devDependencies": {
         "@types/node": "^25.0.6",
         "typescript": "^5.9.3",
@@ -107,7 +107,7 @@
     },
     "packages/core": {
       "name": "@reeleel/core",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "dependencies": {
         "@anthropic-ai/sdk": "^0.116.0",
         "@reeleel/db": "workspace:*",
@@ -121,7 +121,7 @@
     },
     "packages/db": {
       "name": "@reeleel/db",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "dependencies": {
         "@libsql/client": "^0.17.4",
         "@profullstack/libsql-pg": "^0.1.1",
@@ -134,7 +134,7 @@
     },
     "packages/sports": {
       "name": "@reeleel/sports",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "devDependencies": {
         "@types/node": "^25.0.6",
         "typescript": "^5.9.3",
