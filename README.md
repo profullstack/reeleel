@@ -37,7 +37,7 @@ moments for you.
 - **Node.js 22.5+**
 - **FFmpeg and ffprobe** on your `PATH` (not bundled — see
   [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md))
-- pnpm 11+
+- Bun 1.4+ (package manager and production runtime; vitest still uses Node)
 
 Check everything at once:
 
@@ -48,8 +48,8 @@ reeleel doctor
 ## Quick start
 
 ```bash
-pnpm install
-pnpm build
+bun install
+bun run build
 
 # 1. make a project
 reeleel project create "Spring Cup QF" --sport soccer --opponent "Rivals"
@@ -77,7 +77,7 @@ Full command reference: [docs/cli.md](docs/cli.md).
 The web UI covers the same review flow in a browser:
 
 ```bash
-pnpm --filter @reeleel/web dev   # http://127.0.0.1:8788
+bun run --filter @reeleel/web dev # http://127.0.0.1:8788
 ```
 
 ## Repository layout
@@ -131,7 +131,7 @@ Postgres through [`@profullstack/libsql-pg`](https://github.com/profullstack/lib
 
 ```bash
 export DATABASE_URL=postgres://user:pass@host:5432/reeleel
-pnpm db:migrate            # applies packages/db/migrations-pg/global
+bun run db:migrate            # applies packages/db/migrations-pg/global
 ```
 
 With no `DATABASE_URL` the registry is a plain local file and nothing touches
@@ -149,15 +149,15 @@ Migrations are forward-only `.sql` files under `packages/db/migrations/`,
 tracked in a `schema_migrations` table:
 
 ```bash
-pnpm db:migrate          # global database
-pnpm db:status           # show applied vs pending
-pnpm db:migrate --scope project --path ./my-game/project.db
+bun run db:migrate          # global database
+bun run db:status           # show applied vs pending
+bun run db:migrate --scope project --path ./my-game/project.db
 ```
 
 ## Deploying the web app
 
 Deployment is **Docker**, not a buildpack, for one decisive reason: ReelEel
-shells out to FFmpeg for every media operation. A stock Node image has no
+shells out to FFmpeg for every media operation. A stock Bun image has no
 `ffmpeg`, so `reeleel doctor` reports a hard failure and nothing past import
 works. The [`Dockerfile`](Dockerfile) installs it explicitly.
 
@@ -170,7 +170,7 @@ Then check `http://localhost:8080/doctor` — ffmpeg and ffprobe should both be
 green.
 
 [`railway.json`](railway.json) selects the Dockerfile builder, a `/api/health`
-healthcheck and an on-failure restart policy. Locally, `pnpm build && pnpm start`
+healthcheck and an on-failure restart policy. Locally, `bun run build && bun run start`
 still works without Docker if FFmpeg is on your PATH.
 
 Notes on the image:
@@ -275,15 +275,15 @@ These are constraints, not preferences:
 ## Development
 
 ```bash
-pnpm install
-pnpm build            # build every package and app
-pnpm test:run         # unit + integration tests
-pnpm typecheck        # tsc across the workspace
-pnpm lint
+bun install
+bun run build            # build every package and app
+bun run test:run         # unit + integration tests
+bun run typecheck        # tsc across the workspace
+bun run lint
 
-pnpm cli -- --help                 # run the CLI from source
-pnpm --filter @reeleel/api dev     # API on :8787
-pnpm --filter @reeleel/web dev     # web on :8788
+bun run cli --help                    # run the CLI from source
+bun run --filter @reeleel/api dev   # API on :8787
+bun run --filter @reeleel/web dev   # web on :8788
 ```
 
 Tests never include real youth footage. Fixtures are synthetic.

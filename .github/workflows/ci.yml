@@ -28,32 +28,59 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          # Taken from package.json's packageManager field.
-          version: 11.18.0
+          # package.json's packageManager pin; the Dockerfile uses the same
+          # oven/bun image version, so CI and production agree.
+          bun-version-file: package.json
 
-      - uses: actions/setup-node@v4
-        with:
-          # Matches the Dockerfile's node:22-slim, so CI and production agree.
-          node-version: 22
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
+      - run: bun install --frozen-lockfile
 
       # Before lint and typecheck, not after: packages resolve each other
       # through dist/, so nothing type-checks until the graph is built.
       - name: Build
-        run: pnpm build
+        run: bun run build
 
       - name: Lint
-        run: pnpm lint
+        run: bun run lint
 
       - name: Typecheck
-        run: pnpm typecheck
+        run: bun run typecheck
 
+      # vitest runs on the runner's Node: its vi.mock/vi.importActual suites do
+      # not port to bun test as they stand.
       - name: Test
-        run: pnpm test:run
+        run: bun run test:run
+
+      # Production runs on Bun, so run every suite that does not lean on
+      # vitest-only APIs under Bun as well. This is the step that catches a
+      # runtime difference: node:crypto's scrypt calls back with `undefined`,
+      # not `null`, on Bun, which made every password hash reject.
+      - name: Test under Bun (the production runtime)
+        run: |
+          bun test $(git ls-files 'apps/*.test.ts' 'packages/*.test.ts' \
+            | xargs grep -L -E 'vi\.(mocked|importActual)' | sed 's#^#./#')
+
+      # Boot the web server the way the image does (bun dist/index.js from
+      # apps/web) and wait for the health route and the landing page.
+      - name: Boot web under Bun
+        working-directory: apps/web
+        env:
+          HOST: 127.0.0.1
+          PORT: 8788
+          REELEEL_HOME: ${{ runner.temp }}/reeleel-home
+        run: |
+          bun dist/index.js > "$RUNNER_TEMP/web.log" 2>&1 &
+          pid=$!
+          ok=
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8788/api/health >/dev/null; then ok=1; break; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/web.log"
+          test -n "$ok"
+          curl -fsS -o /dev/null -w '/ %{http_code}\n' http://127.0.0.1:8788/
+          kill "$pid"
 
   detector:
     name: real detector model
@@ -63,19 +90,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          version: 11.18.0
+          # package.json's packageManager pin; the Dockerfile uses the same
+          # oven/bun image version, so CI and production agree.
+          bun-version-file: package.json
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
+      - run: bun install --frozen-lockfile
 
       - name: Build
-        run: pnpm build
+        run: bun run build
 
       # 20 MB from a GitHub release. Cached on the model's name and version, so
       # it is fetched once and then reused until the default model changes.
@@ -90,7 +114,7 @@ jobs:
         if: steps.weights.outputs.cache-hit != 'true'
         run: |
           mkdir -p .ci-models
-          node apps/cv-worker/dist/index.js fetch-model \
+          bun apps/cv-worker/dist/index.js fetch-model \
             --sport soccer --output .ci-models/yolox-tiny.onnx
 
       # The assumptions unit tests cannot check: the real input size, the real
@@ -98,4 +122,11 @@ jobs:
       - name: Detector integration tests
         env:
           REELEEL_CV_MODEL: ${{ github.workspace }}/.ci-models/yolox-tiny.onnx
-        run: pnpm exec vitest run apps/cv-worker
+        run: bun x vitest run apps/cv-worker
+
+      # The same model, loaded by onnxruntime-node under Bun, which is what the
+      # web process spawns the worker with in production.
+      - name: Detector integration tests under Bun
+        env:
+          REELEEL_CV_MODEL: ${{ github.workspace }}/.ci-models/yolox-tiny.onnx
+        run: bun test ./apps/cv-worker/src/model.integration.test.ts ./apps/cv-worker/src/signatures.integration.test.ts

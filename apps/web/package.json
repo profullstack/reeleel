@@ -6,10 +6,10 @@
   "description": "ReelEel web app — Hono JSX server-rendered pages with client-side islands, backed by the ReelEel API.",
   "license": "MIT",
   "scripts": {
-    "prebuild": "node scripts/build-client.mjs",
+    "prebuild": "bun scripts/build-client.mjs",
     "build": "tsc -p tsconfig.json",
-    "dev": "node scripts/build-client.mjs --watch & tsx watch src/index.ts",
-    "start": "node dist/index.js",
+    "dev": "bun scripts/build-client.mjs --watch & tsx watch src/index.ts",
+    "start": "bun dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --root ."
   },
