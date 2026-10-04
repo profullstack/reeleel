@@ -286,6 +286,11 @@ export const LandingPage: FC<{ signedIn: boolean }> = ({ signedIn }) => (
         </section>
 
         <footer>
+          <nav class="webring" aria-label="Profullstack webring" style="display:flex;gap:.75rem">
+            <a href="https://rssamplifier.com/ring/profullstack/previous?from=https%3A%2F%2Freeleel.com%2F" rel="prev">{'<<'}</a>
+            <a href="https://rssamplifier.com/ring/profullstack">Profullstack</a>
+            <a href="https://rssamplifier.com/ring/profullstack/next?from=https%3A%2F%2Freeleel.com%2F" rel="next">{'>>'}</a>
+          </nav>
           <span style="margin-left:auto">
             <a href={signedIn ? '/projects' : '/login'}>
               {signedIn ? 'Your projects' : 'Sign in'}
