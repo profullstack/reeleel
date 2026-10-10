@@ -196,6 +196,20 @@ export const createWebApp = (): Hono => {
     });
   });
 
+  // The OpenWebring descriptor: this site's membership in the Profullstack ring.
+  app.get('/.well-known/openwebring.json', (c) =>
+    c.json(
+      {
+        openwebring: '0.1',
+        site: { url: 'https://reeleel.com/', name: 'reeleel' },
+        made_by: 'both',
+        rings: [{ ring: 'https://rssamplifier.com/ring/profullstack', slug: 'reeleel-com' }],
+      },
+      200,
+      { 'cache-control': 'public, max-age=3600' },
+    ),
+  );
+
   app.get('/manifest.webmanifest', (c) =>
     c.json(MANIFEST, 200, { 'cache-control': 'public, max-age=3600' }),
   );
