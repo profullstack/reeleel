@@ -69,6 +69,7 @@ import { registerActions } from './actions.js';
 import { ForgotPage, LoginPage, MessagePage, RegisterPage, ResetPage, VerifyNoticePage } from './views/auth.js';
 import { DoctorPage, ErrorPage, ProjectPage, ProjectsPage } from './views/pages.js';
 import { LandingPage } from './views/landing.js';
+import { footerHtml, descriptorResponse } from '@profullstack/footer';
 import { ReviewPage } from './views/review.js';
 import type { Flash } from './views/pages.js';
 import { MANIFEST, SERVICE_WORKER } from './pwa.js';
@@ -197,17 +198,8 @@ export const createWebApp = (): Hono => {
   });
 
   // The OpenWebring descriptor: this site's membership in the Profullstack ring.
-  app.get('/.well-known/openwebring.json', (c) =>
-    c.json(
-      {
-        openwebring: '0.1',
-        site: { url: 'https://reeleel.com/', name: 'reeleel' },
-        made_by: 'both',
-        rings: [{ ring: 'https://rssamplifier.com/ring/profullstack', slug: 'reeleel-com' }],
-      },
-      200,
-      { 'cache-control': 'public, max-age=3600' },
-    ),
+  app.get('/.well-known/openwebring.json', () =>
+    descriptorResponse({ site: 'https://reeleel.com/', name: 'reeleel', slug: 'reeleel-com' }),
   );
 
   app.get('/manifest.webmanifest', (c) =>
@@ -231,7 +223,13 @@ export const createWebApp = (): Hono => {
    */
   app.get('/', async (c) => {
     const user = await resolveUserFromRequest(c).catch(() => null);
-    if (user === null) return c.html(<LandingPage signedIn={false} />);
+    if (user === null) {
+      const footer = await footerHtml({
+        site: 'https://reeleel.com/',
+        links: [{ label: 'Sign in', href: '/login' }],
+      });
+      return c.html(<LandingPage signedIn={false} footer={footer} />);
+    }
     try {
       return c.html(
         <ProjectsPage

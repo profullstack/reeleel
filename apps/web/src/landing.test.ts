@@ -12,7 +12,7 @@ import { LandingPage } from './views/landing.js';
  */
 
 const render = async (signedIn: boolean): Promise<string> =>
-  String(await LandingPage({ signedIn }));
+  String(await LandingPage({ signedIn, footer: '' }));
 
 describe('the public landing page', () => {
   it('offers a way in for a visitor with no account', async () => {

@@ -1,4 +1,5 @@
 /** @jsxImportSource hono/jsx */
+import { raw } from 'hono/html';
 import type { FC } from 'hono/jsx';
 
 import { StatsTracker } from './tracker.js';
@@ -126,12 +127,8 @@ const STYLES = `
   .honest h3 { font-size: 1rem; margin: 0 0 .4rem; font-weight: 400; }
   .honest .sub { color: var(--muted); font-size: .88rem; margin: 0 0 1rem; }
 
-  footer {
-    padding: 3rem 0 4rem; border-top: 1px solid var(--line);
-    color: var(--muted); font-size: .88rem;
-    display: flex; flex-wrap: wrap; gap: 1rem; align-items: center;
-  }
-  footer a { color: var(--muted); }
+  /* The footer itself is @profullstack/footer; only its colours are ours. */
+  .pfs-footer { margin-top: 2rem; --pfs-footer-muted: var(--muted); }
 
   /* Entrance, staggered. Disabled wholesale for anyone who asked for less. */
   .rise { animation: rise .7s cubic-bezier(.2,.7,.3,1) both; }
@@ -188,7 +185,7 @@ const CANNOT = [
   'Replace you deciding what is worth keeping',
 ];
 
-export const LandingPage: FC<{ signedIn: boolean }> = ({ signedIn }) => (
+export const LandingPage: FC<{ signedIn: boolean; footer: string }> = ({ signedIn, footer }) => (
   <html lang="en">
     <head>
       <meta charset="utf-8" />
@@ -285,19 +282,7 @@ export const LandingPage: FC<{ signedIn: boolean }> = ({ signedIn }) => (
           </div>
         </section>
 
-        <footer>
-          <nav class="webring" aria-label="Profullstack webring" style="display:flex;gap:.75rem">
-            <a href="https://rssamplifier.com/ring/profullstack/previous?from=https%3A%2F%2Freeleel.com%2F" rel="prev" title="Previous site">{'<<'}</a>
-            <a href="https://rssamplifier.com/ring/profullstack">Profullstack</a>
-            <a href="https://rssamplifier.com/ring/profullstack/next?from=https%3A%2F%2Freeleel.com%2F" rel="next" title="Next site">{'>>'}</a>
-            <a href="https://rssamplifier.com/ring/profullstack/random?from=https%3A%2F%2Freeleel.com%2F" title="Random site" aria-label="Random site">{"⚄"}</a>
-          </nav>
-          <span style="margin-left:auto">
-            <a href={signedIn ? '/projects' : '/login'}>
-              {signedIn ? 'Your projects' : 'Sign in'}
-            </a>
-          </span>
-        </footer>
+        {raw(footer)}
       </div>
     </body>
   </html>
