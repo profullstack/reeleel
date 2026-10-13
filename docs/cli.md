@@ -7,6 +7,9 @@ do in the app you can script.
 reeleel [global options] <command> [subcommand] [options]
 ```
 
+Install it with `curl -fsSL https://reeleel.com/install.sh | sh`, or
+`npm install -g @profullstack/reeleel` (Node.js 22.5+).
+
 ## Global options
 
 | Option | Meaning |

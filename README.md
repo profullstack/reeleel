@@ -32,6 +32,19 @@ build proxies and thumbnails, mark moments yourself, trim and order clips,
 assemble reels and export MP4s. What you cannot do yet is have ReelEel find the
 moments for you.
 
+## Install
+
+The `reeleel` command line, in one line:
+
+```bash
+curl -fsSL https://reeleel.com/install.sh | sh
+```
+
+It uses bun if you have it, otherwise npm (Node.js 22.5+), and installs into
+`~/.local` rather than asking for sudo. Re-run it to upgrade. The package is
+[`@profullstack/reeleel`](https://www.npmjs.com/package/@profullstack/reeleel)
+if you would rather `npm install -g` it yourself. You still need FFmpeg (below).
+
 ## Requirements
 
 - **Node.js 22.5+**
@@ -47,10 +60,10 @@ reeleel doctor
 
 ## Quick start
 
-```bash
-bun install
-bun run build
+From a checkout, `bun install && bun run build` builds everything, then
+`bun run cli <command>` runs the CLI from source. With the CLI installed:
 
+```bash
 # 1. make a project
 reeleel project create "Spring Cup QF" --sport soccer --opponent "Rivals"
 
@@ -84,7 +97,7 @@ bun run --filter @reeleel/web dev # http://127.0.0.1:8788
 
 ```
 apps/
-  cli/        @reeleel/cli      the `reeleel` command
+  cli/        @profullstack/reeleel  the `reeleel` command (published to npm)
   api/        @reeleel/api      Hono HTTP API over the core services
   web/        @reeleel/web      Hono JSX SSR pages + client islands (SPA)
   desktop/    @reeleel/desktop  native shell (scaffold, phase 9)

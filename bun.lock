@@ -34,19 +34,23 @@
       },
     },
     "apps/cli": {
-      "name": "@reeleel/cli",
+      "name": "@profullstack/reeleel",
       "version": "0.4.0",
       "bin": {
-        "reeleel": "./dist/index.js",
+        "reeleel": "./bundle/reeleel.js",
       },
       "dependencies": {
-        "@reeleel/core": "workspace:*",
-        "@reeleel/sports": "workspace:*",
+        "@anthropic-ai/sdk": "^0.116.0",
+        "@libsql/client": "^0.17.4",
+        "@profullstack/libsql-pg": "^0.1.1",
         "chalk": "^5.6.2",
         "commander": "^14.0.2",
       },
       "devDependencies": {
+        "@reeleel/core": "workspace:*",
+        "@reeleel/sports": "workspace:*",
         "@types/node": "^25.0.6",
+        "esbuild": "^0.28.1",
         "tsx": "^4.20.6",
         "typescript": "^5.9.3",
         "vitest": "^4.0.17",
@@ -144,8 +148,8 @@
     },
   },
   "trustedDependencies": [
-    "onnxruntime-node",
     "esbuild",
+    "onnxruntime-node",
   ],
   "packages": {
     "@anthropic-ai/sdk": ["@anthropic-ai/sdk@0.116.0", "", { "dependencies": { "json-schema-to-ts": "3.1.1", "standardwebhooks": "1.0.0" }, "peerDependencies": { "zod": "^3.25.0 || ^4.0.0" }, "optionalPeers": ["zod"], "bin": { "anthropic-ai-sdk": "bin/cli" } }, "sha512-4UEapYQ+epLEMsAuLZDvW8ExVSOtHD8a7zTyLzhw0H9RXJ1eilPgmqhjwgcdg22diwx13spw6fJ4rONZ+bS7Ww=="],
@@ -272,11 +276,11 @@
 
     "@profullstack/libsql-pg": ["@profullstack/libsql-pg@0.1.1", "", { "dependencies": { "pg": "8.23.0" }, "peerDependencies": { "@libsql/client": ">=0.5.0" }, "optionalPeers": ["@libsql/client"], "bin": { "libsql-pg": "bin/libsql-pg.js" } }, "sha512-KD4+bCDM31hwheWYxOyn6zxRw1hTqhEqAl/LXfgoQNbZ88ODbDNJViDtxPWCCv7IPgXAMWsh2kbkrjRiT7Sn1Q=="],
 
+    "@profullstack/reeleel": ["@profullstack/reeleel@workspace:apps/cli"],
+
     "@profullstack/x402-gateway": ["@profullstack/x402-gateway@0.7.0", "", { "dependencies": { "@profullstack/keys": "0.1.0" } }, "sha512-xsZRWHdOD9Y9EuRS4PsRmykVS2geOu/luY0jBlliOF3SEgxiLhgmx7ks+2jOUtGlq+cIfSonnk5eEObRGCOJ9w=="],
 
     "@reeleel/api": ["@reeleel/api@workspace:apps/api"],
-
-    "@reeleel/cli": ["@reeleel/cli@workspace:apps/cli"],
 
     "@reeleel/client": ["@reeleel/client@workspace:packages/client"],
 

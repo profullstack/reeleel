@@ -1,0 +1,21 @@
+# ReelEel
+
+> Local-first, FOSS youth-sports video intelligence. Import a whole game, point at
+> your athlete once, and get back the passages they were in as a highlight reel.
+> Video stays on your machine.
+
+## Install the CLI
+
+```sh
+curl -fsSL https://reeleel.com/install.sh | sh
+```
+
+Or `npm install -g @profullstack/reeleel` (Node.js 22.5+), or `bun add -g @profullstack/reeleel`.
+The command is `reeleel`. It needs FFmpeg and ffprobe on PATH; run `reeleel doctor` to check.
+Every command accepts `--json` for machine-readable output.
+
+## Docs
+
+- [CLI reference](https://github.com/profullstack/reeleel/blob/master/docs/cli.md)
+- [README](https://github.com/profullstack/reeleel#readme)
+- [Source (MIT)](https://github.com/profullstack/reeleel)

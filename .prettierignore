@@ -3,3 +3,6 @@ coverage/
 node_modules/
 pnpm-lock.yaml
 apps/web/public/
+apps/cli/bundle/
+apps/cli/migrations/
+apps/cli/migrations-pg/

@@ -61,4 +61,8 @@ describe('the public landing page', () => {
     expect(html).toContain('--ink: #05060e');
     expect(html).toContain('name="theme-color" content="#05060e"');
   });
+
+  it('gives the one-line CLI installer', async () => {
+    expect(await render(false)).toContain('curl -fsSL https://reeleel.com/install.sh | sh');
+  });
 });
