@@ -182,6 +182,27 @@ export const createWebApp = (): Hono => {
     });
   });
 
+  // The one-line CLI installer: `curl -fsSL https://reeleel.com/install.sh | sh`.
+  // Public and above the auth guard, or curl gets a 302 to /login and pipes
+  // HTML into sh. Served as a shell script, never the page shell.
+  app.get('/install.sh', (c) => {
+    const onDisk = path.join(publicDir, 'install.sh');
+    if (!existsSync(onDisk)) return c.notFound();
+    return c.body(readFileSync(onDisk), 200, {
+      'content-type': 'text/x-sh; charset=utf-8',
+      'cache-control': 'public, max-age=300',
+    });
+  });
+
+  app.get('/llms.txt', (c) => {
+    const onDisk = path.join(publicDir, 'llms.txt');
+    if (!existsSync(onDisk)) return c.notFound();
+    return c.body(readFileSync(onDisk), 200, {
+      'content-type': 'text/plain; charset=utf-8',
+      'cache-control': 'public, max-age=300',
+    });
+  });
+
   // ── Sign in ───────────────────────────────────────────────────────────────
 
   // ── Installable app shell (public: needed before sign-in) ─────────────────

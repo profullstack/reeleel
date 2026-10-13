@@ -5,6 +5,8 @@ export default tseslint.config(
   {
     ignores: [
       '**/dist/**',
+      // The npm bundle of the CLI (apps/cli/scripts/bundle.mjs), generated.
+      'apps/cli/bundle/**',
       '**/node_modules/**',
       '**/coverage/**',
       'apps/web/public/**',

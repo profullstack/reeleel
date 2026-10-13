@@ -1,32 +1,64 @@
 {
-  "name": "@reeleel/cli",
+  "name": "@profullstack/reeleel",
   "version": "0.4.0",
   "type": "module",
   "description": "The ReelEel command line. Same services as the desktop app, scriptable.",
   "license": "MIT",
-  "bin": {
-    "reeleel": "./dist/index.js"
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/profullstack/reeleel.git",
+    "directory": "apps/cli"
   },
-  "files": ["dist"],
+  "homepage": "https://reeleel.com",
+  "bugs": {
+    "url": "https://github.com/profullstack/reeleel/issues"
+  },
+  "keywords": [
+    "reeleel",
+    "cli",
+    "video",
+    "sports",
+    "highlights",
+    "ffmpeg",
+    "local-first"
+  ],
+  "bin": {
+    "reeleel": "./bundle/reeleel.js"
+  },
+  "files": [
+    "README.md",
+    "bundle",
+    "migrations",
+    "migrations-pg"
+  ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/bundle.mjs",
     "dev": "tsx src/index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --root ."
+    "test": "vitest run --root .",
+    "bundle": "node scripts/bundle.mjs",
+    "prepack": "node scripts/bundle.mjs"
   },
   "engines": {
     "node": ">=22.5.0"
   },
   "dependencies": {
-    "@reeleel/core": "workspace:*",
-    "@reeleel/sports": "workspace:*",
+    "@anthropic-ai/sdk": "^0.116.0",
+    "@libsql/client": "^0.17.4",
+    "@profullstack/libsql-pg": "^0.1.1",
     "chalk": "^5.6.2",
     "commander": "^14.0.2"
   },
   "devDependencies": {
+    "@reeleel/core": "workspace:*",
+    "@reeleel/sports": "workspace:*",
     "@types/node": "^25.0.6",
+    "esbuild": "^0.28.1",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "vitest": "^4.0.17"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

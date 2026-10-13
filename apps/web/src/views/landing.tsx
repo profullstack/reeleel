@@ -127,6 +127,12 @@ const STYLES = `
   .honest h3 { font-size: 1rem; margin: 0 0 .4rem; font-weight: 400; }
   .honest .sub { color: var(--muted); font-size: .88rem; margin: 0 0 1rem; }
 
+  .cli p { color: var(--muted); font-size: .95rem; margin: 0 0 1rem; }
+  .cli pre {
+    margin: 0; padding: 1rem 1.2rem; overflow-x: auto; font-size: .9rem;
+    background: var(--ink-2); border: 1px solid var(--line); border-radius: 8px;
+  }
+
   /* The footer itself is @profullstack/footer; only its colours are ours. */
   .pfs-footer { margin-top: 2rem; --pfs-footer-muted: var(--muted); }
 
@@ -280,6 +286,17 @@ export const LandingPage: FC<{ signedIn: boolean; footer: string }> = ({ signedI
               </ul>
             </div>
           </div>
+        </section>
+
+        <section id="cli" class="cli rise rise-3">
+          <h2 class="mono">Command line</h2>
+          <p>
+            The same project, import, analysis and export services, scriptable from your terminal.
+            Needs FFmpeg on your PATH.
+          </p>
+          <pre class="mono">
+            <code>curl -fsSL https://reeleel.com/install.sh | sh</code>
+          </pre>
         </section>
 
         {raw(footer)}
