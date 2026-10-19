@@ -19,7 +19,7 @@
   "dependencies": {
     "@hono/node-server": "^1.13.7",
     "@profullstack/footer": "latest",
-    "@profullstack/x402-gateway": "^0.7.0",
+    "@profullstack/x402-gateway": "^0.10.1",
     "@reeleel/api": "workspace:*",
     "@reeleel/core": "workspace:*",
     "hono": "^4.6.14"
