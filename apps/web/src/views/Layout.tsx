@@ -3,6 +3,7 @@ import type { FC, PropsWithChildren } from 'hono/jsx';
 
 import { isAuthEnabled } from '@reeleel/api';
 
+import { PitFooter } from './pitfooter.js';
 import { StatsTracker } from './tracker.js';
 
 /**
@@ -209,6 +210,7 @@ export const Layout: FC<PropsWithChildren<{ title: string }>> = ({ title, childr
         </nav>
       </header>
       <main>{children}</main>
+      <PitFooter />
     </body>
   </html>
 );

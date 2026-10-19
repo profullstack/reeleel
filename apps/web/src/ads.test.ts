@@ -11,7 +11,7 @@ import { adSlotId } from './views/ads.js';
 const SLOT = '4324604c-df20-4c84-b106-e7d21eb0e45f';
 
 const render = async (): Promise<string> =>
-  String(await LandingPage({ signedIn: false, footer: '' }));
+  String(await LandingPage({ signedIn: false }));
 
 afterEach(() => {
   delete process.env['REELEEL_AD_SLOT'];

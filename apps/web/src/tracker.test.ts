@@ -22,7 +22,7 @@ afterEach(() => {
 
 describe('the stats tracker', () => {
   it('ships on the public landing page', async () => {
-    const html = String(await LandingPage({ signedIn: false, footer: '' }));
+    const html = String(await LandingPage({ signedIn: false }));
     expect(html).toContain('https://crawlproof.com/stats.js');
     expect(html).toContain(`data-site="${SITE}"`);
   });
@@ -34,7 +34,7 @@ describe('the stats tracker', () => {
   });
 
   it('does not block rendering', async () => {
-    const html = String(await LandingPage({ signedIn: false, footer: '' }));
+    const html = String(await LandingPage({ signedIn: false }));
     // A synchronous analytics tag would put a third party on the critical path.
     expect(html).toMatch(/<script[^>]*defer[^>]*stats\.js/);
   });
