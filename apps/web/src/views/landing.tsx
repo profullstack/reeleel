@@ -1,4 +1,5 @@
 /** @jsxImportSource hono/jsx */
+import { raw } from 'hono/html';
 import type { FC } from 'hono/jsx';
 
 import { AD_STYLES, AdUnit } from './ads.js';
@@ -134,11 +135,8 @@ const STYLES = `
     background: var(--ink-2); border: 1px solid var(--line); border-radius: 8px;
   }
 
-  footer.site {
-    margin-top: 2rem; padding-top: 1.2rem; border-top: 1px solid var(--line);
-    display: flex; flex-wrap: wrap; gap: .4rem 1.2rem; font-size: .85rem; color: var(--muted);
-  }
-  footer.site a { color: var(--muted); }
+  /* The footer itself is @profullstack/footer; only its colours are ours. */
+  .pfs-footer { margin-top: 2rem; --pfs-footer-muted: var(--muted); }
 
   /* Entrance, staggered. Disabled wholesale for anyone who asked for less. */
   .rise { animation: rise .7s cubic-bezier(.2,.7,.3,1) both; }
@@ -195,7 +193,10 @@ const CANNOT = [
   'Replace you deciding what is worth keeping',
 ];
 
-export const LandingPage: FC<{ signedIn: boolean }> = ({ signedIn }) => (
+export const LandingPage: FC<{ signedIn: boolean; footer?: string }> = ({
+  signedIn,
+  footer = '',
+}) => (
   <html lang="en">
     <head>
       <meta charset="utf-8" />
@@ -306,11 +307,7 @@ export const LandingPage: FC<{ signedIn: boolean }> = ({ signedIn }) => (
           </pre>
         </section>
 
-        <footer class="site">
-          <span>&copy; 2026 Profullstack, Inc.</span>
-          <a href="/login">Sign in</a>
-          <a href="https://github.com/profullstack/reeleel">Code</a>
-        </footer>
+        {raw(footer)}
       </div>
       <PitFooter />
     </body>

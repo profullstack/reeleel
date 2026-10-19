@@ -76,7 +76,7 @@ import {
 } from './views/auth.js';
 import { DoctorPage, ErrorPage, ProjectPage, ProjectsPage } from './views/pages.js';
 import { LandingPage } from './views/landing.js';
-import { descriptorResponse } from '@profullstack/footer';
+import { footerHtml, descriptorResponse } from '@profullstack/footer';
 import { ReviewPage } from './views/review.js';
 import type { Flash } from './views/pages.js';
 import { MANIFEST, SERVICE_WORKER } from './pwa.js';
@@ -252,7 +252,11 @@ export const createWebApp = (): Hono => {
   app.get('/', async (c) => {
     const user = await resolveUserFromRequest(c).catch(() => null);
     if (user === null) {
-      return c.html(<LandingPage signedIn={false} />);
+      const footer = await footerHtml({
+        site: 'https://reeleel.com/',
+        links: [{ label: 'Sign in', href: '/login' }],
+      });
+      return c.html(<LandingPage signedIn={false} footer={footer} />);
     }
     try {
       return c.html(
