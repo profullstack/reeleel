@@ -2,6 +2,7 @@
 import { raw } from 'hono/html';
 import type { FC } from 'hono/jsx';
 
+import { AD_STYLES, AdUnit } from './ads.js';
 import { StatsTracker } from './tracker.js';
 
 /**
@@ -204,7 +205,7 @@ export const LandingPage: FC<{ signedIn: boolean; footer: string }> = ({ signedI
       <link rel="icon" href="/brand/favicon-32.png" sizes="32x32" type="image/png" />
       <link rel="apple-touch-icon" href="/brand/apple-touch-icon.png" sizes="180x180" />
       <meta name="theme-color" content="#05060e" />
-      <style dangerouslySetInnerHTML={{ __html: STYLES }} />
+      <style dangerouslySetInnerHTML={{ __html: STYLES + AD_STYLES }} />
       <StatsTracker />
     </head>
     <body>
@@ -233,8 +234,8 @@ export const LandingPage: FC<{ signedIn: boolean; footer: string }> = ({ signedI
             Two hours of footage. <em>Four minutes</em> worth watching.
           </h1>
           <p class="lede">
-            Upload the whole game. Point at your kid once. ReelEel follows them through it and
-            hands back the passages they were actually in — for you to keep or throw away.
+            Upload the whole game. Point at your kid once. ReelEel follows them through it and hands
+            back the passages they were actually in — for you to keep or throw away.
           </p>
           <div class="actions">
             <a class="btn" href={signedIn ? '/projects' : '/register'}>
@@ -298,6 +299,8 @@ export const LandingPage: FC<{ signedIn: boolean; footer: string }> = ({ signedI
             <code>curl -fsSL https://reeleel.com/install.sh | sh</code>
           </pre>
         </section>
+
+        <AdUnit />
 
         {raw(footer)}
       </div>
