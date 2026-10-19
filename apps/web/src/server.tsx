@@ -66,10 +66,17 @@ import {
 } from '@reeleel/core';
 
 import { registerActions } from './actions.js';
-import { ForgotPage, LoginPage, MessagePage, RegisterPage, ResetPage, VerifyNoticePage } from './views/auth.js';
+import {
+  ForgotPage,
+  LoginPage,
+  MessagePage,
+  RegisterPage,
+  ResetPage,
+  VerifyNoticePage,
+} from './views/auth.js';
 import { DoctorPage, ErrorPage, ProjectPage, ProjectsPage } from './views/pages.js';
 import { LandingPage } from './views/landing.js';
-import { footerHtml, descriptorResponse } from '@profullstack/footer';
+import { descriptorResponse } from '@profullstack/footer';
 import { ReviewPage } from './views/review.js';
 import type { Flash } from './views/pages.js';
 import { MANIFEST, SERVICE_WORKER } from './pwa.js';
@@ -245,11 +252,7 @@ export const createWebApp = (): Hono => {
   app.get('/', async (c) => {
     const user = await resolveUserFromRequest(c).catch(() => null);
     if (user === null) {
-      const footer = await footerHtml({
-        site: 'https://reeleel.com/',
-        links: [{ label: 'Sign in', href: '/login' }],
-      });
-      return c.html(<LandingPage signedIn={false} footer={footer} />);
+      return c.html(<LandingPage signedIn={false} />);
     }
     try {
       return c.html(
@@ -504,7 +507,10 @@ export const createWebApp = (): Hono => {
         return c.redirect(`/login?next=${encodeURIComponent(`${url.pathname}${url.search}`)}`);
       },
       onUnverified: (c, user: AuthUser) =>
-        c.html(<VerifyNoticePage email={user.email} sent={false} delivered={mailer.configured} />, 403),
+        c.html(
+          <VerifyNoticePage email={user.email} sent={false} delivered={mailer.configured} />,
+          403,
+        ),
     }),
   );
 
@@ -593,7 +599,9 @@ export const createWebApp = (): Hono => {
        */
       const musicDir = projectDir(root, 'music');
       const music = existsSync(musicDir)
-        ? readdirSync(musicDir).filter((name) => /\.(mp3|m4a|aac|wav|ogg|flac)$/i.test(name)).sort()
+        ? readdirSync(musicDir)
+            .filter((name) => /\.(mp3|m4a|aac|wav|ogg|flac)$/i.test(name))
+            .sort()
         : [];
       return c.html(
         <ProjectPage
