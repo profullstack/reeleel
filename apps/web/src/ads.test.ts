@@ -25,6 +25,11 @@ describe('the CrawlProof ad unit', () => {
     expect(html).toMatch(/<script[^>]*async[^>]*crawlproof\.com\/ad\.js/);
   });
 
+  it('sits at the top of the content, not down by the footer', async () => {
+    const html = await render();
+    expect(html.indexOf('data-cp-ad')).toBeLessThan(html.indexOf('id="how"'));
+  });
+
   it('can be switched off for a self-hosted build', async () => {
     process.env['REELEEL_AD_SLOT'] = 'off';
     expect(adSlotId()).toBe('');
