@@ -249,6 +249,9 @@ export const LandingPage: FC<{ signedIn: boolean; footer: string }> = ({ signedI
           </div>
         </div>
 
+        {/* Top of the content, under the hero: never down by the footer. */}
+        <AdUnit />
+
         <section id="how" class="rise rise-2">
           <h2 class="mono">How it works</h2>
           <div class="steps">
@@ -299,8 +302,6 @@ export const LandingPage: FC<{ signedIn: boolean; footer: string }> = ({ signedI
             <code>curl -fsSL https://reeleel.com/install.sh | sh</code>
           </pre>
         </section>
-
-        <AdUnit />
 
         {raw(footer)}
       </div>
