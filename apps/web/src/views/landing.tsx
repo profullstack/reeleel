@@ -2,7 +2,6 @@
 import { raw } from 'hono/html';
 import type { FC } from 'hono/jsx';
 
-import { AD_STYLES, AdUnit } from './ads.js';
 import { PitFooter } from './pitfooter.js';
 import { StatsTracker } from './tracker.js';
 
@@ -209,7 +208,7 @@ export const LandingPage: FC<{ signedIn: boolean; footer?: string }> = ({
       <link rel="icon" href="/brand/favicon-32.png" sizes="32x32" type="image/png" />
       <link rel="apple-touch-icon" href="/brand/apple-touch-icon.png" sizes="180x180" />
       <meta name="theme-color" content="#05060e" />
-      <style dangerouslySetInnerHTML={{ __html: STYLES + AD_STYLES }} />
+      <style dangerouslySetInnerHTML={{ __html: STYLES }} />
       <StatsTracker />
     </head>
     <body>
@@ -252,9 +251,6 @@ export const LandingPage: FC<{ signedIn: boolean; footer?: string }> = ({
             )}
           </div>
         </div>
-
-        {/* Top of the content, under the hero: never down by the footer. */}
-        <AdUnit />
 
         <section id="how" class="rise rise-2">
           <h2 class="mono">How it works</h2>

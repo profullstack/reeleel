@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { LandingPage } from './views/landing.js';
-import { adSlotId } from './views/ads.js';
+import { AdUnit, adSlotId } from './views/ads.js';
 
 /**
  * The ad unit is client-filled, so a missing tag looks exactly like an unsold
@@ -18,23 +18,22 @@ afterEach(() => {
 });
 
 describe('the CrawlProof ad unit', () => {
-  it('ships exactly one unit on the public landing page', async () => {
+  it('the public landing page (homepage) carries no ad', async () => {
     const html = await render();
-    expect(html.match(/data-cp-ad/g)).toHaveLength(1);
-    expect(html).toContain(`data-slot="${SLOT}"`);
-    expect(html).toMatch(/<script[^>]*async[^>]*crawlproof\.com\/ad\.js/);
+    expect(html).not.toContain('data-cp-ad');
+    expect(html).not.toContain('crawlproof.com/ad.js');
   });
 
-  it('sits at the top of the content, not down by the footer', async () => {
-    const html = await render();
-    expect(html.indexOf('data-cp-ad')).toBeLessThan(html.indexOf('id="how"'));
+  it('renders as one low-profile text_link unit', async () => {
+    const html = String(await AdUnit({}));
+    expect(html.match(/data-cp-ad/g)).toHaveLength(1);
+    expect(html).toContain(`data-slot="${SLOT}"`);
+    expect(html).toContain('data-format="text_link"');
   });
 
   it('can be switched off for a self-hosted build', async () => {
     process.env['REELEEL_AD_SLOT'] = 'off';
     expect(adSlotId()).toBe('');
-    const html = await render();
-    expect(html).not.toContain('data-cp-ad');
-    expect(html).not.toContain('ad.js');
+    expect(String(await AdUnit({}) ?? '')).not.toContain('data-cp-ad');
   });
 });
