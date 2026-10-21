@@ -88,7 +88,7 @@
       "dependencies": {
         "@hono/node-server": "^1.13.7",
         "@profullstack/footer": "latest",
-        "@profullstack/x402-gateway": "^0.10.1",
+        "@profullstack/x402-gateway": "^0.11.0",
         "@reeleel/api": "workspace:*",
         "@reeleel/core": "workspace:*",
         "hono": "^4.6.14",
@@ -278,7 +278,7 @@
 
     "@profullstack/reeleel": ["@profullstack/reeleel@workspace:apps/cli"],
 
-    "@profullstack/x402-gateway": ["@profullstack/x402-gateway@0.10.1", "", { "dependencies": { "@profullstack/keys": "^0.1.0" } }, "sha512-YF/P3GRbb/8dAHIhDT2R7yHSAK+olrT4/zAWLzf5aF9Na8o1/rJCdP+k6UnGepyQ9RQ2qL9p5diRVwb18Zt4VA=="],
+    "@profullstack/x402-gateway": ["@profullstack/x402-gateway@0.11.0", "", { "dependencies": { "@profullstack/keys": "^0.1.0" } }, "sha512-Lfrz+SRTwQZfcoCaVtaaMNPJx74Lp/5oyS7vJJAEuJmH1TjBzhE7dWquISkj1p42oc+VW5I9xH9p7YhEKqmr4Q=="],
 
     "@reeleel/api": ["@reeleel/api@workspace:apps/api"],
 
