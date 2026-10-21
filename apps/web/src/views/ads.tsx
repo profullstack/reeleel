@@ -27,17 +27,16 @@ export const adSlotId = (): string => {
  * unit is in the markup before ad.js runs and its own DOMContentLoaded pass
  * fills it — no manual `crawlproofAds.scan()` is needed here.
  *
- * No `data-format`: ad.js picks one from the unit's measured width (728x90 on
- * a desktop column, 300x250 on a phone), which is one request for one
- * impression. ad.js prepends its own "Advertisement" caption, so there is no
- * label here. Collapsed until filled by the `.cp-ad` rules in the page styles.
+ * Always the low-profile text_link line (40px, fluid, its own "Sponsored"
+ * mark). The homepage carries no ad. Collapsed until filled by the `.cp-ad`
+ * rules in the page styles.
  */
 export const AdUnit: FC = () => {
   const slot = adSlotId();
   if (!slot) return null;
   return (
     <>
-      <aside class="cp-ad" data-cp-ad="" data-slot={slot} />
+      <aside class="cp-ad" data-cp-ad="" data-slot={slot} data-format="text_link" />
       <script async src={SRC} />
     </>
   );
@@ -46,14 +45,8 @@ export const AdUnit: FC = () => {
 /**
  * Zero height until ad.js starts a fill (it sets `data-cp-filled`, and removes
  * it again on an empty response), so an unsold or blocked slot leaves no hole.
- * On a phone the unit escapes the column's gutter so a 300px rectangle is not
- * cropped by a 272px column.
  */
 export const AD_STYLES = `
-  .cp-ad { display: flex; flex-direction: column; align-items: center; height: 0; overflow: hidden; }
-  .cp-ad[data-cp-filled] { height: auto; margin: 2.5rem 0 0; }
-  @media (max-width: 640px) {
-    .cp-ad { width: 100vw; margin-inline: calc(50% - 50vw); }
-    .cp-ad[data-cp-filled] { margin: 2.5rem calc(50% - 50vw) 0; }
-  }
+  .cp-ad { display: block; width: 100%; height: 0; overflow: hidden; }
+  .cp-ad[data-cp-filled] { height: auto; margin: 0.5rem 0; }
 `;
