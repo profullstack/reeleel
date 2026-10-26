@@ -333,6 +333,7 @@ export const analyzeProject = async (
   };
 
   let tracksCreated = 0;
+  // eslint-disable-next-line no-useless-assignment -- read on paths that skip scoring
   let momentsGenerated = 0;
 
   /**
