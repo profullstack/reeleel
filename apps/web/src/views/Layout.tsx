@@ -62,7 +62,7 @@ const STYLES = `
   button:hover { border-color: var(--accent); color: var(--accent); }
   button[disabled] { opacity: .5; cursor: default; }
   label { display: block; font-size: .82rem; color: var(--muted); margin-bottom: .25rem; }
-  input[type="text"], input[type="email"], input[type="password"] {
+  input[type="text"], input[type="email"], input[type="password"], input[type="url"] {
     font: inherit; width: 100%; padding: .45rem .6rem; border-radius: .4rem;
     border: 1px solid var(--line); background: var(--bg); color: inherit;
   }
@@ -70,6 +70,12 @@ const STYLES = `
     outline: 2px solid var(--accent); outline-offset: 2px;
   }
   .field { margin-bottom: .85rem; }
+  /* The signup profile from @profullstack/profile: rows that read as .field. */
+  .pfs-profile { border: 0; padding: 0; margin: 0; min-width: 0; }
+  .pfs-profile__row { margin-bottom: .85rem; }
+  .pfs-profile__optional { color: var(--muted); }
+  .pfs-profile input[aria-invalid="true"] { border-color: var(--reject); }
+  .pfs-profile__error { color: var(--reject); font-size: .82rem; margin: .25rem 0 0; }
   .narrow { max-width: 24rem; }
   .actions { display: flex; align-items: center; gap: 1rem; margin-top: 1rem; }
   .notice {

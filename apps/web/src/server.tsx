@@ -38,10 +38,12 @@ import {
   resetLoginAttempts,
   resolveUserFromRequest,
   revokeSession,
+  saveRegistrationProfile,
   scopeFor,
   setPassword,
   setUserCookie,
   signupAllowed,
+  validateSignupProfile,
   verificationEmail,
   verifyLogin,
 } from '@reeleel/api';
@@ -351,6 +353,14 @@ export const createWebApp = (): Hono => {
       );
     }
 
+    // What was typed into the profile rows goes back into them on any refusal.
+    const typed = Object.fromEntries(
+      ['first_name', 'last_name', 'company_domain', 'job_title', 'linkedin_url'].map((name) => [
+        name,
+        field(body, name),
+      ]),
+    );
+
     const strength = checkPasswordStrength(password);
     if (!strength.ok) {
       return c.html(
@@ -358,6 +368,22 @@ export const createWebApp = (): Hono => {
           error={strength.reason ?? 'Choose a stronger password.'}
           email={address}
           minPasswordLength={MIN_PASSWORD_LENGTH}
+          profile={{ values: typed }}
+        />,
+        400,
+      );
+    }
+
+    // The signup profile is checked before the account exists, so a refused
+    // form creates nothing. First and last name are required.
+    const profile = validateSignupProfile({ ...typed, email: address });
+    if (!profile.ok) {
+      return c.html(
+        <RegisterPage
+          error={profile.errors['email'] ?? 'A few of those fields need another look.'}
+          email={address}
+          minPasswordLength={MIN_PASSWORD_LENGTH}
+          profile={{ values: typed, errors: profile.errors }}
         />,
         400,
       );
@@ -365,6 +391,7 @@ export const createWebApp = (): Hono => {
 
     try {
       const user = await createUser({ email: address, password });
+      await saveRegistrationProfile(user, profile.profile);
       const delivered = await sendVerification(c, user);
       setUserCookie(c, await createUserSession(user.id), DEFAULT_SESSION_SECONDS);
       return c.html(<VerifyNoticePage email={user.email} sent={false} delivered={delivered} />);
@@ -375,6 +402,7 @@ export const createWebApp = (): Hono => {
             error={error.message}
             email={address}
             minPasswordLength={MIN_PASSWORD_LENGTH}
+            profile={{ values: typed }}
           />,
           409,
         );

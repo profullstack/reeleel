@@ -1,7 +1,23 @@
 /** @jsxImportSource hono/jsx */
 import type { FC } from 'hono/jsx';
 
+import { PROFILE_ENHANCE_SCRIPT, renderProfileFields } from '@profullstack/profile';
+
 import { Layout } from './Layout.js';
+
+/** The signup profile beside the form's own email box (@profullstack/profile). */
+const SIGNUP_PROFILE_FIELDS = [
+  'first_name',
+  'last_name',
+  'company_domain',
+  'job_title',
+  'linkedin_url',
+] as const;
+
+export interface SignupProfileState {
+  values?: Record<string, string | null>;
+  errors?: Record<string, string>;
+}
 
 const Problem: FC<{ message?: string | undefined }> = ({ message }) =>
   message === undefined ? null : (
@@ -51,7 +67,8 @@ export const RegisterPage: FC<{
   error?: string | undefined;
   email?: string | undefined;
   minPasswordLength: number;
-}> = ({ error, email, minPasswordLength }) => (
+  profile?: SignupProfileState | undefined;
+}> = ({ error, email, minPasswordLength, profile }) => (
   <Layout title="Create account">
     <h1>Create account</h1>
     <Problem message={error} />
@@ -72,6 +89,16 @@ export const RegisterPage: FC<{
         />
         <p class="muted">At least {minPasswordLength} characters. Length beats punctuation.</p>
       </div>
+      <div
+        dangerouslySetInnerHTML={{
+          __html: renderProfileFields({
+            fields: SIGNUP_PROFILE_FIELDS,
+            values: profile?.values ?? {},
+            errors: profile?.errors ?? {},
+          }),
+        }}
+      />
+      <script dangerouslySetInnerHTML={{ __html: PROFILE_ENHANCE_SCRIPT }} />
       <div class="actions">
         <button type="submit">Create account</button>
         <a href="/login" class="muted">
@@ -80,8 +107,8 @@ export const RegisterPage: FC<{
       </div>
     </form>
     <p class="muted">
-      ReelEel only stores your email and password. It never asks for anything about the
-      athletes in your footage beyond what you choose to type.
+      ReelEel stores your email, password and the details above. It never asks for anything
+      about the athletes in your footage beyond what you choose to type.
     </p>
   </Layout>
 );
