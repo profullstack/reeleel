@@ -36,7 +36,7 @@
     },
     "apps/cli": {
       "name": "@profullstack/reeleel",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "bin": {
         "reeleel": "./bundle/reeleel.js",
       },
