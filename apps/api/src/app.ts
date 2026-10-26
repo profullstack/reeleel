@@ -46,6 +46,7 @@ import {
 } from './auth.js';
 import type { AuthConfig } from './auth.js';
 import { createUserSession, verifyLogin } from './users.js';
+import { profileHandlers } from './profile.js';
 import { errorResponse, handle } from './errors.js';
 
 // The web app shares this implementation rather than reimplementing it.
@@ -54,6 +55,7 @@ export * from './accounts.js';
 export * from './email.js';
 export * from './passwords.js';
 export * from './users.js';
+export * from './profile.js';
 
 /**
  * The API is a thin shell over @reeleel/core — deliberately. Any logic that
@@ -129,6 +131,14 @@ export const createApp = (options: CreateAppOptions = {}): Hono => {
           ? null
           : { id: user.id, email: user.email, emailVerified: user.emailVerifiedAt !== null },
     });
+  });
+
+  // The signed-in account's signup profile (@profullstack/profile).
+  app.on(['GET', 'PUT', 'PATCH'], '/api/v1/me/profile', async (c) => {
+    const user = currentUser(c);
+    const handlers = await profileHandlers(user === null ? null : { id: user.id, email: user.email });
+    const method = c.req.method as 'GET' | 'PUT' | 'PATCH';
+    return handlers[method](c.req.raw);
   });
 
   app.get(
