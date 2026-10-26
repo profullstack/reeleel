@@ -167,7 +167,7 @@ export class ReelEelClient {
     }
 
     const text = await response.text();
-    let payload: (Envelope & Record<string, unknown>) | null = null;
+    let payload: (Envelope & Record<string, unknown>) | null;
     try {
       payload = text.length > 0 ? (JSON.parse(text) as Envelope & Record<string, unknown>) : null;
     } catch {

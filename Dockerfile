@@ -14,7 +14,7 @@
 # with process.execPath, so it runs under Bun too, onnxruntime-node included.
 
 # ── Builder ─────────────────────────────────────────────────────────────────
-FROM oven/bun:1.4.0-slim AS builder
+FROM oven/bun:1.4.4-slim AS builder
 
 WORKDIR /app
 
@@ -59,7 +59,7 @@ RUN rm -rf node_modules apps/*/node_modules packages/*/node_modules \
   && bun install --frozen-lockfile --production
 
 # ── Runner ──────────────────────────────────────────────────────────────────
-FROM oven/bun:1.4.0-slim AS runner
+FROM oven/bun:1.4.4-slim AS runner
 
 # ffmpeg provides both ffmpeg and ffprobe, which is what `reeleel doctor` looks
 # for. ca-certificates is needed for Postgres over TLS. gosu lets the entrypoint
