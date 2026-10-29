@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.1.5",
+    "@profullstack/coinpay-onboard": "0.3.1",
     "@profullstack/footer": "latest",
     "@profullstack/profile": "0.1.6",
     "@profullstack/x402-gateway": "^0.13.1",

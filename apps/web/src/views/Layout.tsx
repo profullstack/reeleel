@@ -61,6 +61,10 @@ const STYLES = `
   }
   button:hover { border-color: var(--accent); color: var(--accent); }
   button[disabled] { opacity: .5; cursor: default; }
+  a.button.coinpay {
+    display: inline-block; padding: .5rem .9rem; border-radius: .4rem; font-weight: 600;
+    background: var(--accent); color: var(--bg); text-decoration: none;
+  }
   label { display: block; font-size: .82rem; color: var(--muted); margin-bottom: .25rem; }
   input[type="text"], input[type="email"], input[type="password"], input[type="url"] {
     font: inherit; width: 100%; padding: .45rem .6rem; border-radius: .4rem;
@@ -212,6 +216,7 @@ export const Layout: FC<PropsWithChildren<{ title: string }>> = ({ title, childr
           <a href="/doctor">Doctor</a>
           {/* Only meaningful when a token is configured; a local instance has
               no session to end. */}
+          {isAuthEnabled() ? <a href="/account">Account</a> : null}
           {isAuthEnabled() ? <a href="/logout">Sign out</a> : null}
         </nav>
       </header>

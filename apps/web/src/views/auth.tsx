@@ -26,15 +26,33 @@ const Problem: FC<{ message?: string | undefined }> = ({ message }) =>
     </p>
   );
 
+/** "Sign in with CoinPay": CoinPay is the fleet's master account. */
+export const CoinpayButton: FC<{ next?: string | undefined; label?: string }> = ({
+  next,
+  label = 'Sign in with CoinPay',
+}) => (
+  <div class="card narrow">
+    <a
+      class="button coinpay"
+      href={`/api/v1/coinpay/oauth/start?next=${encodeURIComponent(next ?? '/')}`}
+    >
+      {label}
+    </a>
+    <p class="muted">Use your CoinPay account. Or use an email and password below.</p>
+  </div>
+);
+
 export const LoginPage: FC<{
   error?: string | undefined;
   next?: string | undefined;
   email?: string | undefined;
   signupAllowed?: boolean;
-}> = ({ error, next, email, signupAllowed = true }) => (
+  coinpay?: boolean;
+}> = ({ error, next, email, signupAllowed = true, coinpay = false }) => (
   <Layout title="Sign in">
     <h1>Sign in</h1>
     <Problem message={error} />
+    {coinpay ? <CoinpayButton next={next} /> : null}
     <form method="post" action="/login" class="card narrow">
       <input type="hidden" name="next" value={next ?? '/'} />
       <div class="field">
@@ -68,10 +86,12 @@ export const RegisterPage: FC<{
   email?: string | undefined;
   minPasswordLength: number;
   profile?: SignupProfileState | undefined;
-}> = ({ error, email, minPasswordLength, profile }) => (
+  coinpay?: boolean;
+}> = ({ error, email, minPasswordLength, profile, coinpay = false }) => (
   <Layout title="Create account">
     <h1>Create account</h1>
     <Problem message={error} />
+    {coinpay ? <CoinpayButton label="Sign up with CoinPay" /> : null}
     <form method="post" action="/register" class="card narrow">
       <div class="field">
         <label for="email">Email</label>
@@ -109,6 +129,36 @@ export const RegisterPage: FC<{
     <p class="muted">
       ReelEel stores your email, password and the details above. It never asks for anything
       about the athletes in your footage beyond what you choose to type.
+    </p>
+  </Layout>
+);
+
+/**
+ * A CoinPay-only account has no address that can receive mail (CoinPay does
+ * not verify the one it shares), so it is asked for one and proves it by link.
+ */
+export const AddEmailPage: FC<{ error?: string | undefined; email?: string | undefined }> = ({
+  error,
+  email,
+}) => (
+  <Layout title="Add your email">
+    <h1>Add your email</h1>
+    <Problem message={error} />
+    <p>
+      You signed in with CoinPay. ReelEel needs an address it has confirmed itself before you can
+      upload footage, so add one and open the link we send to it.
+    </p>
+    <form method="post" action="/verify/email" class="card narrow">
+      <div class="field">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" autocomplete="email" required value={email ?? ''} />
+      </div>
+      <div class="actions">
+        <button type="submit">Send the link</button>
+      </div>
+    </form>
+    <p class="muted">
+      <a href="/logout">Sign out</a>
     </p>
   </Layout>
 );
@@ -207,5 +257,58 @@ export const MessagePage: FC<{ title: string; body: string; linkHref?: string; l
     <h1>{title}</h1>
     <p>{body}</p>
     {linkHref === undefined ? null : <p><a href={linkHref}>{linkText ?? 'Continue'}</a></p>}
+  </Layout>
+);
+
+/** Connect / Disconnect CoinPay, from inside the account it applies to. */
+export const AccountPage: FC<{
+  email: string;
+  placeholderEmail: boolean;
+  coinpayAvailable: boolean;
+  coinpayEmail: string | null;
+  linked: boolean;
+  canDisconnect: boolean;
+  ok?: string | undefined;
+  error?: string | undefined;
+}> = ({ email, placeholderEmail, coinpayAvailable, coinpayEmail, linked, canDisconnect, ok, error }) => (
+  <Layout title="Account">
+    <h1>Account</h1>
+    {ok === undefined ? null : <p class="notice">{ok}</p>}
+    <Problem message={error} />
+    <div class="card">
+      <p>
+        Email: <strong>{placeholderEmail ? 'none yet (signed up with CoinPay)' : email}</strong>
+      </p>
+    </div>
+    <h2>CoinPay</h2>
+    <div class="card">
+      {linked ? (
+        <>
+          <p>
+            Connected{coinpayEmail === null ? '' : ` (${coinpayEmail})`}. You can sign in with
+            CoinPay.
+          </p>
+          {canDisconnect ? (
+            <form method="post" action="/account/coinpay/disconnect">
+              <button type="submit">Disconnect CoinPay</button>
+            </form>
+          ) : (
+            <p class="muted">
+              CoinPay is the only way into this account, so it cannot be disconnected. Add an
+              email and set a password first.
+            </p>
+          )}
+        </>
+      ) : coinpayAvailable ? (
+        <>
+          <p>Connect your CoinPay account to sign in with it.</p>
+          <a class="button coinpay" href={"/api/v1/coinpay/oauth/start?link=1&next=%2Faccount"}>
+            Connect CoinPay
+          </a>
+        </>
+      ) : (
+        <p class="muted">Sign in with CoinPay is not configured on this server.</p>
+      )}
+    </div>
   </Layout>
 );

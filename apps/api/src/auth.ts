@@ -206,6 +206,11 @@ export const PUBLIC_PATHS = new Set([
   '/register',
   '/verify',
   '/verify/resend',
+  // A CoinPay-only account adding a real address; the handler needs a session.
+  '/verify/email',
+  // Sign in with CoinPay: the start reads a session only for Connect CoinPay.
+  '/api/v1/coinpay/oauth/start',
+  '/api/v1/coinpay/oauth/callback',
   '/forgot',
   '/reset',
   '/client.js',
