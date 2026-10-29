@@ -56,6 +56,7 @@ export * from './email.js';
 export * from './passwords.js';
 export * from './users.js';
 export * from './profile.js';
+export * from './coinpay.js';
 
 /**
  * The API is a thin shell over @reeleel/core — deliberately. Any logic that

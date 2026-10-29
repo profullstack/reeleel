@@ -46,6 +46,8 @@ import {
   validateSignupProfile,
   verificationEmail,
   verifyLogin,
+  isPlaceholderEmail,
+  readCoinpayConfig,
 } from '@reeleel/api';
 import type { AuthUser } from '@reeleel/api';
 import {
@@ -68,7 +70,9 @@ import {
 } from '@reeleel/core';
 
 import { registerActions } from './actions.js';
+import { registerCoinpayAccountRoutes, registerCoinpayRoutes } from './coinpay.js';
 import {
+  AddEmailPage,
   ForgotPage,
   LoginPage,
   MessagePage,
@@ -123,6 +127,7 @@ export const createWebApp = (): Hono => {
   const email = readEmailConfig();
   const mailer = createMailer(email);
   const verificationRequired = requireVerifiedEmail();
+  const coinpayOn = (): boolean => readCoinpayConfig() !== null;
 
   /** Issues a fresh verification link and tries to deliver it. */
   const sendVerification = async (
@@ -276,7 +281,11 @@ export const createWebApp = (): Hono => {
   app.get('/login', async (c) => {
     if ((await resolveUserFromRequest(c)) !== null) return c.redirect('/');
     return c.html(
-      <LoginPage next={safeRedirect(c.req.query('next'))} signupAllowed={signupAllowed()} />,
+      <LoginPage
+        next={safeRedirect(c.req.query('next'))}
+        signupAllowed={signupAllowed()}
+        coinpay={coinpayOn()}
+      />,
     );
   });
 
@@ -289,7 +298,12 @@ export const createWebApp = (): Hono => {
 
     if (!loginAttemptAllowed(clientKey(c))) {
       return c.html(
-        <LoginPage error="Too many attempts. Wait a few minutes." next={next} email={address} />,
+        <LoginPage
+          error="Too many attempts. Wait a few minutes."
+          next={next}
+          email={address}
+          coinpay={coinpayOn()}
+        />,
         429,
       );
     }
@@ -299,7 +313,12 @@ export const createWebApp = (): Hono => {
       // One message for both wrong-password and no-such-account: distinguishing
       // them turns the form into an account-existence oracle.
       return c.html(
-        <LoginPage error="Those details do not match an account." next={next} email={address} />,
+        <LoginPage
+          error="Those details do not match an account."
+          next={next}
+          email={address}
+          coinpay={coinpayOn()}
+        />,
         401,
       );
     }
@@ -331,7 +350,7 @@ export const createWebApp = (): Hono => {
       );
     }
     if ((await resolveUserFromRequest(c)) !== null) return c.redirect('/');
-    return c.html(<RegisterPage minPasswordLength={MIN_PASSWORD_LENGTH} />);
+    return c.html(<RegisterPage minPasswordLength={MIN_PASSWORD_LENGTH} coinpay={coinpayOn()} />);
   });
 
   app.post('/register', async (c) => {
@@ -410,6 +429,10 @@ export const createWebApp = (): Hono => {
       throw error;
     }
   });
+
+  // ── Sign in with CoinPay (public: start, callback, add an address) ────────
+
+  registerCoinpayRoutes(app, { signupAllowed, mailer });
 
   // ── Email verification ────────────────────────────────────────────────────
 
@@ -539,14 +562,17 @@ export const createWebApp = (): Hono => {
         return c.redirect(`/login?next=${encodeURIComponent(`${url.pathname}${url.search}`)}`);
       },
       onUnverified: (c, user: AuthUser) =>
-        c.html(
-          <VerifyNoticePage email={user.email} sent={false} delivered={mailer.configured} />,
-          403,
-        ),
+        isPlaceholderEmail(user.email)
+          ? c.html(<AddEmailPage />, 403)
+          : c.html(
+              <VerifyNoticePage email={user.email} sent={false} delivered={mailer.configured} />,
+              403,
+            ),
     }),
   );
 
   registerActions(app);
+  registerCoinpayAccountRoutes(app);
 
   /** `?ok=` / `?err=` set by a redirect after a form post. */
   const flashOf = (c: Context): Flash => ({
