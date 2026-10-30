@@ -8,6 +8,7 @@
  */
 
 export const MANIFEST = {
+  id: '/',
   name: 'ReelEel',
   short_name: 'ReelEel',
   description: 'Local-first youth-sports highlight reels.',
@@ -22,13 +23,13 @@ export const MANIFEST = {
    * accepted by the manifest spec and quietly ignored by several Android
    * launchers, which then fall back to a screenshot of the page.
    *
-   * `maskable` is deliberately not claimed: the mascot is drawn to its own
-   * edges, and a launcher that crops a maskable icon to a circle would take the
-   * bat off.
+   * The maskable copy pads the mascot inside the Android safe zone; the regular
+   * icons retain the full artwork.
    */
   icons: [
     { src: '/brand/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
     { src: '/brand/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+    { src: '/brand/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
   ],
 } as const;
 
@@ -52,11 +53,15 @@ const FRESH = ['/client.js'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE)
-      .then((cache) => cache.addAll([...STATIC, ...FRESH]))
-      // Never leave a fixed bug sitting behind an old worker waiting for every
-      // tab to close.
-      .then(() => self.skipWaiting()),
+    (async () => {
+      const cache = await caches.open(CACHE);
+      await cache.addAll([...STATIC, ...FRESH]);
+      // The landing page is the public app shell. Omit cookies so a signed-in
+      // navigation can never put account state into the offline cache.
+      const shell = await fetch('/', { credentials: 'omit' });
+      if (shell.ok && !shell.redirected) await cache.put('/', shell);
+      await self.skipWaiting();
+    })(),
   );
 });
 
@@ -76,6 +81,11 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
   // Never cache data or anything behind authentication.
   if (url.pathname.startsWith('/api/')) return;
+
+  if (request.mode === 'navigate' && url.pathname === '/') {
+    event.respondWith(fetch(request).catch(() => caches.match('/')));
+    return;
+  }
 
   if (FRESH.includes(url.pathname)) {
     event.respondWith(

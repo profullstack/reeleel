@@ -168,6 +168,7 @@ export const createWebApp = (): Hono => {
     'logo@2x.png',
     'icon-512.png',
     'icon-192.png',
+    'icon-maskable-512.png',
     'apple-touch-icon.png',
     'favicon-32.png',
     'favicon-16.png',

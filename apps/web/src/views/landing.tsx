@@ -205,9 +205,11 @@ export const LandingPage: FC<{ signedIn: boolean; footer?: string }> = ({
         name="description"
         content="Upload a whole game, point at your kid once, and get the minutes worth watching."
       />
+      <link rel="manifest" href="/manifest.webmanifest" />
       <link rel="icon" href="/brand/favicon-32.png" sizes="32x32" type="image/png" />
       <link rel="apple-touch-icon" href="/brand/apple-touch-icon.png" sizes="180x180" />
       <meta name="theme-color" content="#05060e" />
+      <script dangerouslySetInnerHTML={{ __html: "if('serviceWorker' in navigator){addEventListener('load',function(){navigator.serviceWorker.register('/sw.js').catch(function(){})})}" }} />
       <style dangerouslySetInnerHTML={{ __html: STYLES }} />
       <StatsTracker />
     </head>
