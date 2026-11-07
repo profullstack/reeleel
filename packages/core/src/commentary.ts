@@ -268,11 +268,14 @@ export const aiScript = async (
       }),
       maxTokens: 2000,
     });
+    // Only for clips a parent titled. Given a clip with no title, these models
+    // write "accelerates past the defender" from nothing, which is the one
+    // failure this file exists to prevent, so those clips stay on the template.
+    const titled = new Set(entries.filter((entry) => entry.title !== null).map((entry) => entry.clipId));
     return {
-      lines: (object as WrittenScript).lines.map((line) => ({
-        clipId: line.clipId,
-        text: unmasked(line.text, name),
-      })),
+      lines: (object as WrittenScript).lines
+        .filter((line) => titled.has(line.clipId))
+        .map((line) => ({ clipId: line.clipId, text: unmasked(line.text, name) })),
     };
   };
 

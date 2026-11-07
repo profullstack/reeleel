@@ -134,10 +134,17 @@ describe('the announcer on c0mpute', () => {
     });
 
   it('takes the words from the model and the timing from the template', async () => {
+    const titled = clip({ title: 'Sam drives in' });
     const answer = JSON.stringify({ lines: [{ clipId: 'clp_1', text: 'Jordan drives in strong.' }] });
-    const lines = await aiScript([clip()], [moment()], context, { router: c0mpute(answer) });
+    const lines = await aiScript([titled], [moment()], context, { router: c0mpute(answer) });
     expect(lines[0]!.text).toBe('Sam drives in strong.');
-    expect(lines[0]!.startSeconds).toBe(templateScript([clip()], [moment()], context)[0]!.startSeconds);
+    expect(lines[0]!.startSeconds).toBe(templateScript([titled], [moment()], context)[0]!.startSeconds);
+  });
+
+  it('keeps the template on a clip nobody titled: the model would invent the play', async () => {
+    const answer = JSON.stringify({ lines: [{ clipId: 'clp_1', text: 'Jordan accelerates past the defender.' }] });
+    const lines = await aiScript([clip()], [moment()], context, { router: c0mpute(answer) });
+    expect(lines).toEqual(templateScript([clip()], [moment()], context));
   });
 
   it('never sends a child their own name, in the athlete field or a title', async () => {
