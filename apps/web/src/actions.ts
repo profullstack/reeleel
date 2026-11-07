@@ -42,6 +42,7 @@ import {
   removeVideo,
   renderReel,
   aiScript,
+  hasAnnouncerModel,
   templateScript,
   speak,
   voiceApiKey,
@@ -332,14 +333,11 @@ const startRender = (
             projectName: manifest.name,
           };
 
-          const aiKey = process.env['ANTHROPIC_API_KEY'];
-          const lines =
-            aiKey === undefined || aiKey.length === 0
-              ? templateScript(clips, moments, context)
-              : await aiScript(clips, moments, context, {
-                  apiKey: aiKey,
-                  onProgress: (message) => void logJob(root, job.id, message, 'warn'),
-                });
+          const lines = hasAnnouncerModel()
+            ? await aiScript(clips, moments, context, {
+                onProgress: (message) => void logJob(root, job.id, message, 'warn'),
+              })
+            : templateScript(clips, moments, context);
 
           const written = lines.filter((line) => line.fromTitle).length;
           await logJob(

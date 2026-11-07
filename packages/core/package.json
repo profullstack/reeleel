@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.3.0",
+    "@profullstack/ai-providers": "0.1.2",
     "@reeleel/db": "workspace:*",
     "@reeleel/sports": "workspace:*"
   },
