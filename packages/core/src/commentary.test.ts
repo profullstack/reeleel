@@ -1,6 +1,7 @@
+import { createAiProviders } from '@profullstack/ai-providers';
 import { describe, expect, it } from 'vitest';
 
-import { templateLine, templateScript } from './commentary.js';
+import { aiScript, templateLine, templateScript } from './commentary.js';
 import type { Clip, SuggestedMoment } from './types.js';
 
 /**
@@ -113,5 +114,55 @@ describe('scheduling the lines across a reel', () => {
 
   it('produces nothing for a reel with no clips', () => {
     expect(templateScript([], [], context)).toEqual([]);
+  });
+});
+
+describe('the announcer on c0mpute', () => {
+  const c0mpute = (answer: string, seen: string[] = []) =>
+    createAiProviders({
+      env: {},
+      paidFallback: false,
+      c0mpute: {
+        fetch: (async (url: string, init?: RequestInit) => {
+          if (url.endsWith('/api/chat')) {
+            seen.push(String(init?.body));
+            return Response.json({ jobId: 'j', source: 'p2p', model: 'm' });
+          }
+          return new Response(`event: done\ndata: ${JSON.stringify({ text: answer })}\n\n`);
+        }) as typeof fetch,
+      },
+    });
+
+  it('takes the words from the model and the timing from the template', async () => {
+    const answer = JSON.stringify({ lines: [{ clipId: 'clp_1', text: 'Jordan drives in strong.' }] });
+    const lines = await aiScript([clip()], [moment()], context, { router: c0mpute(answer) });
+    expect(lines[0]!.text).toBe('Sam drives in strong.');
+    expect(lines[0]!.startSeconds).toBe(templateScript([clip()], [moment()], context)[0]!.startSeconds);
+  });
+
+  it('never sends a child their own name, in the athlete field or a title', async () => {
+    const seen: string[] = [];
+    const named = { athleteName: 'Sam Ortiz', sport: 'basketball', projectName: 'Sam vs Lincoln' };
+    const answer = JSON.stringify({ lines: [{ clipId: 'clp_1', text: 'Jordan steals it!' }] });
+    const lines = await aiScript([clip({ title: 'sam ortiz steals it, go Sam' })], [moment()], named, {
+      router: c0mpute(answer, seen),
+    });
+    expect(seen.join('')).not.toMatch(/sam|ortiz|lincoln/i);
+    expect(lines[0]!.text).toBe('Sam Ortiz steals it!');
+  });
+
+  it('falls back to the template and says why when every model fails', async () => {
+    const notes: string[] = [];
+    const down = createAiProviders({
+      env: {},
+      paidFallback: false,
+      c0mpute: { fetch: (async () => new Response('{}', { status: 503 })) as unknown as typeof fetch },
+    });
+    const lines = await aiScript([clip()], [moment()], context, {
+      router: down,
+      onProgress: (note) => notes.push(note),
+    });
+    expect(lines).toEqual(templateScript([clip()], [moment()], context));
+    expect(notes[0]).toContain('script generation failed');
   });
 });
