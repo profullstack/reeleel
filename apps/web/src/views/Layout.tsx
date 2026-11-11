@@ -188,6 +188,14 @@ export const Layout: FC<PropsWithChildren<{ title: string }>> = ({ title, childr
       <meta name="apple-mobile-web-app-title" content="ReelEel" />
       <style dangerouslySetInnerHTML={{ __html: STYLES }} />
       <script type="module" src="/client.js" defer />
+      {/* WebMCP (@profullstack/webmcp): site_info and open_page for an AI
+          agent in the visitor's browser. */}
+      <script
+        type="module"
+        data-webmcp=""
+        src="https://cdn.jsdelivr.net/npm/@profullstack/webmcp@0/src/embed.js"
+        data-pages={JSON.stringify({ home: '/', projects: '/projects', account: '/account', doctor: '/doctor' })}
+      />
       <script
         dangerouslySetInnerHTML={{
           __html:
