@@ -91,7 +91,7 @@
         "@profullstack/coinpay-onboard": "0.3.1",
         "@profullstack/footer": "latest",
         "@profullstack/profile": "0.1.6",
-        "@profullstack/x402-gateway": "^0.18.0",
+        "@profullstack/x402-gateway": "^0.18.1",
         "@reeleel/api": "workspace:*",
         "@reeleel/core": "workspace:*",
         "hono": "^4.13.14",
@@ -304,7 +304,7 @@
 
     "@profullstack/reeleel": ["@profullstack/reeleel@workspace:apps/cli"],
 
-    "@profullstack/x402-gateway": ["@profullstack/x402-gateway@0.18.0", "", { "dependencies": { "@profullstack/keys": "^0.1.0" } }, "sha512-+vORJd17QpLycouk0wrmyOlnyv+6Q9Ttxk+iglsMH2pZpejTUD2Ak3ysKxQsb94R4m1GLSEv8DHoCS49Nf4/0A=="],
+    "@profullstack/x402-gateway": ["@profullstack/x402-gateway@0.18.1", "", { "dependencies": { "@profullstack/keys": "^0.1.0" } }, "sha512-zc2JGLXMX8eCk7Mp4X91E175enOTNcWPZncKf3LXzoGE+XEhHDJHM1LRZkkY3x2pjLYX3AB11Vx/TP3cobSQ/g=="],
 
     "@reeleel/api": ["@reeleel/api@workspace:apps/api"],
 
