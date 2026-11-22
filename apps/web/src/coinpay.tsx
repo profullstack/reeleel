@@ -2,6 +2,7 @@
 import { authorizeUrl, finishSignIn, pkce, randomToken, sameState, SIGN_IN_SCOPES } from '@profullstack/coinpay-onboard/oauth';
 import type { Context, Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
+import { coinpayFetch } from './coinpay-ua.js';
 
 import {
   DEFAULT_SESSION_SECONDS,
@@ -147,6 +148,7 @@ export const registerCoinpayRoutes = (app: Hono, options: CoinpayRouteOptions): 
         clientId: cfg.clientId,
         clientSecret: cfg.clientSecret,
         redirectUri: cfg.redirectUri,
+        fetch: coinpayFetch,
       });
       profile = { sub: result.sub, email: result.email, name: result.name };
     } catch (error) {
