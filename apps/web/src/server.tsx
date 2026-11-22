@@ -111,8 +111,21 @@ const field = (body: Record<string, unknown>, name: string): string => {
  * People, search engines and retrieval crawlers pass through untouched. Without
  * COINPAY_X402_KEY and CRAWL_PAY_TO they still get 402, with an empty offer.
  */
+const siteUrl = (process.env.SITE_URL || 'https://reeleel.com').replace(/\/+$/, '');
+
+/**
+ * The pages a signed-out visitor can read, for /sitemap.xml. Everything past
+ * the auth guard (projects, reviews, doctor) is per-account and stays out.
+ */
+const PUBLIC_PATHS = ['/', '/register', '/login'];
+
+export const sitemapXml = (origin: string): string =>
+  `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${PUBLIC_PATHS.map(
+    (p) => `  <url><loc>${origin}${p}</loc></url>`,
+  ).join('\n')}\n</urlset>\n`;
+
 const crawlGateway = createGateway({
-  siteUrl: process.env.SITE_URL ?? 'https://reeleel.com',
+  siteUrl,
   siteName: 'reeleel',
   coinpay: { apiKey: process.env.COINPAY_X402_KEY },
   payTo: process.env.CRAWL_PAY_TO,
@@ -123,6 +136,13 @@ export const createWebApp = (): Hono => {
   const app = new Hono();
   app.use('*', x402Gateway(crawlGateway));
   app.get('/robots.txt', (c) => c.text(crawlGateway.robotsTxt({ disallow: ['/api/'] })));
+  // Public and above the auth guard, like robots.txt, which points every crawler here.
+  app.get('/sitemap.xml', (c) =>
+    c.body(sitemapXml(siteUrl), 200, {
+      'content-type': 'application/xml; charset=utf-8',
+      'cache-control': 'public, max-age=3600',
+    }),
+  );
   const auth = readAuthConfig();
   const email = readEmailConfig();
   const mailer = createMailer(email);
